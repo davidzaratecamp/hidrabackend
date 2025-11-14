@@ -622,6 +622,113 @@ class CandidatoController {
       res.status(500).json({ error: error.message });
     }
   }
+
+  async editarCandidato(req, res) {
+    try {
+      const { candidatoId } = req.params;
+      const {
+        primer_nombre, primer_apellido, email_personal, numero_celular,
+        nacionalidad, tipo_documento, numero_documento, cliente, cargo,
+        oleada, ciudad, fecha_citacion_entrevista, fuente_reclutamiento,
+        observaciones_llamada, observaciones_generales
+      } = req.body;
+
+      if (!primer_nombre || !primer_apellido || !numero_celular || !cliente || !cargo) {
+        return res.status(400).json({ error: 'Todos los campos requeridos deben completarse' });
+      }
+
+      // Verificar duplicados (excluyendo el candidato actual)
+      const checkDuplicatesQuery = `
+        SELECT id, email_personal, numero_documento 
+        FROM hyd_candidatos 
+        WHERE id != ? AND (
+          (email_personal = ? AND email_personal IS NOT NULL AND email_personal != '') 
+          OR (numero_documento = ? AND numero_documento IS NOT NULL AND numero_documento != '')
+        )
+      `;
+      
+      global.db.query(checkDuplicatesQuery, [candidatoId, email_personal || '', numero_documento || ''], (checkErr, checkResults) => {
+        if (checkErr) {
+          return res.status(500).json({ error: 'Error verificando duplicados' });
+        }
+        
+        if (checkResults.length > 0) {
+          const existingCandidate = checkResults[0];
+          if (existingCandidate.email_personal === email_personal && email_personal) {
+            return res.status(400).json({ error: 'Ya existe un candidato con este email' });
+          }
+          if (existingCandidate.numero_documento === numero_documento && numero_documento) {
+            return res.status(400).json({ error: 'Ya existe un candidato con esta cédula' });
+          }
+        }
+
+        // Actualizar candidato
+        const query = `
+          UPDATE hyd_candidatos 
+          SET 
+            primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?,
+            nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?,
+            oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?,
+            observaciones_llamada = ?, observaciones_generales = ?, updated_at = NOW()
+          WHERE id = ?
+        `;
+
+        global.db.query(query, [
+          primer_nombre, primer_apellido, email_personal, numero_celular,
+          nacionalidad, tipo_documento, numero_documento, cliente, cargo,
+          oleada || null, ciudad || null, fecha_citacion_entrevista || null,
+          fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null,
+          candidatoId
+        ], (err, results) => {
+          if (err) {
+            console.error('Error actualizando candidato:', err);
+            return res.status(500).json({ error: 'Error actualizando candidato' });
+          }
+
+          if (results.affectedRows === 0) {
+            return res.status(404).json({ error: 'Candidato no encontrado' });
+          }
+
+          res.json({
+            message: 'Candidato actualizado exitosamente',
+            candidatoId: candidatoId
+          });
+        });
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  async actualizarFechaEntrevista(req, res) {
+    try {
+      const { candidatoId } = req.params;
+      const { fecha_citacion_entrevista } = req.body;
+
+      const query = `
+        UPDATE hyd_candidatos 
+        SET fecha_citacion_entrevista = ?, updated_at = NOW()
+        WHERE id = ?
+      `;
+
+      global.db.query(query, [fecha_citacion_entrevista || null, candidatoId], (err, results) => {
+        if (err) {
+          console.error('Error actualizando fecha de entrevista:', err);
+          return res.status(500).json({ error: 'Error actualizando fecha de entrevista' });
+        }
+
+        if (results.affectedRows === 0) {
+          return res.status(404).json({ error: 'Candidato no encontrado' });
+        }
+
+        res.json({
+          message: 'Fecha de entrevista actualizada exitosamente'
+        });
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
 }
 
 module.exports = new CandidatoController();

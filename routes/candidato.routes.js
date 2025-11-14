@@ -17,6 +17,8 @@ router.get('/analytics/cargos', verificarToken, verificarPermiso('ver_estadistic
 router.get('/analytics/progreso', verificarToken, verificarPermiso('ver_estadisticas'), candidatoController.getProgresoFormularios);
 router.post('/crear', verificarToken, verificarPermiso('crear_candidatos'), candidatoController.crearCandidato);
 router.post('/reenviar-email/:candidatoId', verificarToken, verificarPermiso('reenviar_emails'), candidatoController.reenviarEmail);
+router.put('/editar/:candidatoId', verificarToken, verificarPermiso('editar_candidatos'), candidatoController.editarCandidato);
+router.put('/fecha-entrevista/:candidatoId', verificarToken, verificarPermiso('agendar_entrevistas'), candidatoController.actualizarFechaEntrevista);
 
 router.put('/hoja-vida/:token', candidatoController.actualizarHojaVida);
 router.put('/datos-basicos/:token', candidatoController.actualizarDatosBasicos);

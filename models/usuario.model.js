@@ -12,11 +12,11 @@ class UsuarioModel {
       administrador: [
         'ver_dashboard', 'ver_estadisticas', 'ver_candidatos', 'crear_candidatos',
         'editar_candidatos', 'eliminar_candidatos', 'ver_usuarios', 'crear_usuarios',
-        'editar_usuarios', 'eliminar_usuarios', 'ver_reportes'
+        'editar_usuarios', 'eliminar_usuarios', 'ver_reportes', 'agendar_entrevistas', 'reenviar_emails'
       ],
       reclutador: [
         'ver_dashboard', 'ver_estadisticas', 'ver_candidatos', 'crear_candidatos',
-        'editar_candidatos', 'reenviar_emails'
+        'editar_candidatos', 'reenviar_emails', 'agendar_entrevistas'
       ],
       seleccion: [
         'ver_candidatos', 'editar_estados_candidatos', 'ver_perfiles_completos',
