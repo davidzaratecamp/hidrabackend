@@ -9,7 +9,7 @@ const authRoutes = require('./routes/auth.routes');
 const app = express();
 
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5174', 'http://200.91.204.54'],
+  origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://200.91.204.54'],
   credentials: true
 }));
 
