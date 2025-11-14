@@ -549,21 +549,31 @@ class CandidatoController {
         observaciones_llamada, observaciones_generales
       } = req.body;
 
-      if (!primer_nombre || !primer_apellido || !email_personal || !numero_celular ||
-          !numero_documento || !cliente || !cargo) {
+      if (!primer_nombre || !primer_apellido || !numero_celular || !cliente || !cargo) {
         return res.status(400).json({ error: 'Todos los campos requeridos deben completarse' });
       }
 
-      // Verificar si el email ya existe
-      const checkEmailQuery = 'SELECT id FROM hyd_candidatos WHERE email_personal = ?';
+      // Verificar duplicados (email y cédula)
+      const checkDuplicatesQuery = `
+        SELECT id, email_personal, numero_documento 
+        FROM hyd_candidatos 
+        WHERE (email_personal = ? AND email_personal IS NOT NULL AND email_personal != '') 
+           OR (numero_documento = ? AND numero_documento IS NOT NULL AND numero_documento != '')
+      `;
       
-      global.db.query(checkEmailQuery, [email_personal], (checkErr, checkResults) => {
+      global.db.query(checkDuplicatesQuery, [email_personal || '', numero_documento || ''], (checkErr, checkResults) => {
         if (checkErr) {
-          return res.status(500).json({ error: 'Error verificando email' });
+          return res.status(500).json({ error: 'Error verificando duplicados' });
         }
         
         if (checkResults.length > 0) {
-          return res.status(400).json({ error: 'Ya existe un candidato con este email' });
+          const existingCandidate = checkResults[0];
+          if (existingCandidate.email_personal === email_personal && email_personal) {
+            return res.status(400).json({ error: 'Ya existe un candidato con este email' });
+          }
+          if (existingCandidate.numero_documento === numero_documento && numero_documento) {
+            return res.status(400).json({ error: 'Ya existe un candidato con esta cédula' });
+          }
         }
 
         // Generar token único

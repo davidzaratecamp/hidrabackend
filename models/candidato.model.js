@@ -134,7 +134,8 @@ class CandidatoModel {
         { value: 'Número incorrecto', label: 'Número incorrecto' },
         { value: 'Interesado', label: 'Interesado' },
         { value: 'No interesado', label: 'No interesado' },
-        { value: 'Reagendar', label: 'Reagendar' }
+        { value: 'Reagendar', label: 'Reagendar' },
+        { value: 'No apto', label: 'No apto' }
       ],
       cargos_staff: [
         'Analista Administrativa Y Contable', 'Analista De Calidad', 'Analista De Calidad Pe',
@@ -180,11 +181,12 @@ class CandidatoModel {
       eps_opciones: [
         'Sura EPS', 'Nueva EPS', 'Sanitas EPS', 'Salud Total EPS', 
         'Compensar EPS', 'Famisanar EPS', 'Medimás EPS', 'Aliansalud EPS',
-        'EPS SOAS', 'Coosalud EPS', 'Mutual SER', 'Capital Salud'
+        'EPS SOAS', 'Coosalud EPS', 'Mutual SER', 'Capital Salud',
+        'Régimen Especial', 'No tengo EPS'
       ],
       afp_opciones: [
         'Protección', 'Porvenir', 'Colfondos', 'Old Mutual', 
-        'Skandia', 'Colpensiones'
+        'Skandia', 'Colpensiones', 'No tengo AFP'
       ],
       niveles_estudios: [
         { value: 'primaria', label: 'Primaria' },
