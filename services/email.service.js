@@ -28,7 +28,7 @@ class EmailService {
         .container { max-width: 600px; margin: 0 auto; padding: 20px; }
         .header { background: #1e40af; color: white; padding: 20px; text-align: center; }
         .content { padding: 20px; background: #f8f9fa; }
-        .btn { display: inline-block; padding: 12px 24px; background: #1e40af; color: white; text-decoration: none; border-radius: 6px; margin: 10px 0; }
+        .btn { display: inline-block; padding: 12px 24px; background: #1e40af; color: white !important; text-decoration: none; border-radius: 6px; margin: 10px 0; }
         .footer { text-align: center; padding: 20px; font-size: 12px; color: #666; }
       </style>
     </head>
