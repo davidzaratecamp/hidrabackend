@@ -2,6 +2,12 @@ class CandidatoModel {
   static getEstadosValidos() {
     return [
       'nuevo',
+      'contacto_fallido',
+      'no_contesta',
+      'reagendar',
+      'no_interesado',
+      'numero_incorrecto',
+      'contacto_exitoso',
       'formularios_enviados', 
       'formularios_completados',
       'citado',
@@ -10,6 +16,81 @@ class CandidatoModel {
       'rechazado',
       'contratado'
     ];
+  }
+
+  static getEstadosConfig() {
+    return {
+      'nuevo': { 
+        label: 'Nuevo', 
+        color: 'bg-gray-100 text-gray-800',
+        descripcion: 'Candidato recién registrado'
+      },
+      'contacto_fallido': { 
+        label: 'Contacto Fallido', 
+        color: 'bg-red-100 text-red-800',
+        descripcion: 'No se logró establecer contacto'
+      },
+      'no_contesta': { 
+        label: 'No Contesta', 
+        color: 'bg-orange-100 text-orange-800',
+        descripcion: 'No responde llamadas'
+      },
+      'reagendar': { 
+        label: 'Reagendar', 
+        color: 'bg-yellow-100 text-yellow-800',
+        descripcion: 'Pendiente reagendar llamada'
+      },
+      'no_interesado': { 
+        label: 'No Interesado', 
+        color: 'bg-red-100 text-red-800',
+        descripcion: 'No está interesado en el cargo'
+      },
+      'numero_incorrecto': { 
+        label: 'Número Incorrecto', 
+        color: 'bg-red-100 text-red-800',
+        descripcion: 'Número telefónico incorrecto'
+      },
+      'contacto_exitoso': { 
+        label: 'Contacto Exitoso', 
+        color: 'bg-green-100 text-green-800',
+        descripcion: 'Contacto establecido exitosamente'
+      },
+      'formularios_enviados': { 
+        label: 'Formularios Enviados', 
+        color: 'bg-blue-100 text-blue-800',
+        descripcion: 'Formularios enviados al candidato'
+      },
+      'formularios_completados': { 
+        label: 'Formularios Completados', 
+        color: 'bg-green-100 text-green-800',
+        descripcion: 'Candidato completó formularios'
+      },
+      'citado': { 
+        label: 'Citado', 
+        color: 'bg-purple-100 text-purple-800',
+        descripcion: 'Citado para entrevista'
+      },
+      'entrevistado': { 
+        label: 'Entrevistado', 
+        color: 'bg-indigo-100 text-indigo-800',
+        descripcion: 'Entrevista realizada'
+      },
+      'aprobado': { 
+        label: 'Aprobado', 
+        color: 'bg-emerald-100 text-emerald-800',
+        descripcion: 'Candidato aprobado'
+      },
+      'rechazado': { 
+        label: 'Rechazado', 
+        color: 'bg-red-100 text-red-800',
+        descripcion: 'Candidato rechazado'
+      },
+      'contratado': { 
+        label: 'Contratado', 
+        color: 'bg-green-100 text-green-800',
+        descripcion: 'Candidato contratado'
+      }
+    };
   }
 
   static getOpcionesCatalogo() {
