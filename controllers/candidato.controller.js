@@ -88,16 +88,33 @@ class CandidatoController {
           return res.status(500).json({ error: 'Error de base de datos' });
         }
         
+        // Solo incluir estados que se muestran en el frontend
+        const estadosVisibles = [
+          'nuevo', 'contacto_exitoso', 'formularios_enviados', 'formularios_completados',
+          'contacto_fallido', 'no_contesta', 'reagendar', 'no_interesado', 
+          'numero_incorrecto', 'no_asistio'
+        ];
+        
         const resumen = {};
-        CandidatoModel.getEstadosValidos().forEach(estado => {
+        estadosVisibles.forEach(estado => {
           resumen[estado] = 0;
         });
         
         results.forEach(item => {
-          resumen[item.estado] = item.cantidad;
+          // Solo incluir si el estado es visible en el frontend
+          if (estadosVisibles.includes(item.estado)) {
+            resumen[item.estado] = item.cantidad;
+          }
         });
         
-        res.json(resumen);
+        // Agregar estadísticas adicionales para debugging
+        const totalQuery = 'SELECT COUNT(*) as total FROM hyd_candidatos';
+        global.db.query(totalQuery, (totalErr, totalResults) => {
+          if (!totalErr && totalResults.length > 0) {
+            resumen._total_bd = totalResults[0].total;
+          }
+          res.json(resumen);
+        });
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
