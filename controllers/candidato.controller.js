@@ -601,8 +601,8 @@ class CandidatoController {
         `;
 
         global.db.query(query, [
-          primer_nombre, primer_apellido, email_personal, numero_celular,
-          nacionalidad, tipo_documento, numero_documento, cliente, cargo,
+          primer_nombre, primer_apellido, email_personal || null, numero_celular,
+          nacionalidad, tipo_documento, numero_documento || null, cliente, cargo,
           oleada || null, ciudad || null, fecha_citacion_entrevista || null,
           fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null,
           token, fechaVencimiento
@@ -699,8 +699,8 @@ class CandidatoController {
           `;
           
           queryParams = [
-            primer_nombre, primer_apellido, email_personal, numero_celular,
-            nacionalidad, tipo_documento, numero_documento, cliente, cargo,
+            primer_nombre, primer_apellido, email_personal || null, numero_celular,
+            nacionalidad, tipo_documento, numero_documento || null, cliente, cargo,
             oleada || null, ciudad || null, fecha_citacion_entrevista || null,
             fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null,
             estado, candidatoId
@@ -718,8 +718,8 @@ class CandidatoController {
           `;
           
           queryParams = [
-            primer_nombre, primer_apellido, email_personal, numero_celular,
-            nacionalidad, tipo_documento, numero_documento, cliente, cargo,
+            primer_nombre, primer_apellido, email_personal || null, numero_celular,
+            nacionalidad, tipo_documento, numero_documento || null, cliente, cargo,
             oleada || null, ciudad || null, fecha_citacion_entrevista || null,
             fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null,
             candidatoId
