@@ -41,9 +41,21 @@ class CandidatoController {
     try {
       const { estado } = req.params;
       
+      console.log('=== DEBUG getCandidatosPorEstado ===');
+      console.log('Estado solicitado:', estado);
+      console.log('Estados válidos:', CandidatoModel.getEstadosValidos());
+      
       if (!CandidatoModel.getEstadosValidos().includes(estado)) {
         return res.status(400).json({ error: 'Estado inválido' });
       }
+      
+      // Primero, verificar todos los candidatos en la BD
+      const debugQuery = `SELECT estado, COUNT(*) as count FROM hyd_candidatos GROUP BY estado`;
+      global.db.query(debugQuery, (debugErr, debugResults) => {
+        if (!debugErr) {
+          console.log('Estados en BD:', debugResults);
+        }
+      });
       
       const query = `
         SELECT 
@@ -58,10 +70,16 @@ class CandidatoController {
         ORDER BY updated_at DESC
       `;
       
+      console.log('Query:', query);
+      console.log('Parámetro estado:', estado);
+      
       global.db.query(query, [estado], (err, results) => {
         if (err) {
+          console.error('Error en query:', err);
           return res.status(500).json({ error: 'Error de base de datos' });
         }
+        
+        console.log(`Candidatos encontrados para estado '${estado}':`, results.length);
         
         const candidatosConProgreso = results.map(candidato => ({
           ...candidato,
@@ -71,6 +89,7 @@ class CandidatoController {
         res.json(candidatosConProgreso);
       });
     } catch (error) {
+      console.error('Error en getCandidatosPorEstado:', error);
       res.status(500).json({ error: error.message });
     }
   }
