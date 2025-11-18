@@ -45,20 +45,25 @@ class CandidatoController {
         return res.status(400).json({ error: 'Estado inválido' });
       }
       
+      // Obtener el ID del reclutador desde el token JWT
+      const reclutadorId = req.user.id;
+      
       const query = `
         SELECT 
           id, primer_nombre, primer_apellido, email_personal, numero_celular,
-          cliente, cargo, oleada, fecha_citacion_entrevista, estado,
+          cliente, cargo, oleada, fecha_citacion_entrevista, estado, reclutador_id,
           formulario_hoja_vida_completado, formulario_datos_basicos_completado,
           formulario_estudios_completado, formulario_experiencia_completado,
           formulario_personal_completado, formulario_consentimiento_completado,
           updated_at
         FROM hyd_candidatos 
-        WHERE estado = ? 
+        WHERE estado = ? AND (reclutador_id = ? OR reclutador_id IS NULL)
         ORDER BY updated_at DESC
       `;
       
-      global.db.query(query, [estado], (err, results) => {
+      console.log('Obteniendo candidatos para reclutador ID:', reclutadorId, 'y estado:', estado);
+      
+      global.db.query(query, [estado, reclutadorId], (err, results) => {
         if (err) {
           return res.status(500).json({ error: 'Error de base de datos' });
         }
@@ -77,13 +82,19 @@ class CandidatoController {
 
   async getResumenEstados(req, res) {
     try {
+      // Obtener el ID del reclutador desde el token JWT
+      const reclutadorId = req.user.id;
+      
       const query = `
         SELECT estado, COUNT(*) as cantidad 
         FROM hyd_candidatos 
+        WHERE reclutador_id = ? OR reclutador_id IS NULL
         GROUP BY estado
       `;
       
-      global.db.query(query, (err, results) => {
+      console.log('Obteniendo resumen de estados para reclutador ID:', reclutadorId);
+      
+      global.db.query(query, [reclutadorId], (err, results) => {
         if (err) {
           return res.status(500).json({ error: 'Error de base de datos' });
         }
@@ -116,16 +127,18 @@ class CandidatoController {
   async getPerfilCompleto(req, res) {
     try {
       const { candidatoId } = req.params;
+      const reclutadorId = req.user.id;
       
-      const query = 'SELECT * FROM hyd_candidatos WHERE id = ?';
+      // Verificar que el candidato pertenece al reclutador o es compartido (NULL)
+      const query = 'SELECT * FROM hyd_candidatos WHERE id = ? AND (reclutador_id = ? OR reclutador_id IS NULL)';
       
-      global.db.query(query, [candidatoId], (err, results) => {
+      global.db.query(query, [candidatoId, reclutadorId], (err, results) => {
         if (err) {
           return res.status(500).json({ error: 'Error de base de datos' });
         }
         
         if (results.length === 0) {
-          return res.status(404).json({ error: 'Candidato no encontrado' });
+          return res.status(404).json({ error: 'Candidato no encontrado o no tienes acceso a este candidato' });
         }
         
         const candidato = results[0];
@@ -590,22 +603,27 @@ class CandidatoController {
         const fechaVencimiento = new Date();
         fechaVencimiento.setDate(fechaVencimiento.getDate() + 30); // 30 días
 
+        // Obtener el ID del reclutador desde el token JWT
+        const reclutadorId = req.user.id;
+        
         const query = `
           INSERT INTO hyd_candidatos (
             primer_nombre, primer_apellido, email_personal, numero_celular,
             nacionalidad, tipo_documento, numero_documento, cliente, cargo,
             oleada, ciudad, fecha_citacion_entrevista, fuente_reclutamiento,
             observaciones_llamada, observaciones_generales, token_acceso, fecha_vencimiento_token,
-            estado, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'nuevo', NOW(), NOW())
+            estado, reclutador_id, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'nuevo', ?, NOW(), NOW())
         `;
+
+        console.log('Creando candidato para reclutador ID:', reclutadorId);
 
         global.db.query(query, [
           primer_nombre, primer_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular,
           nacionalidad, tipo_documento, numero_documento || null, cliente, cargo,
           oleada || null, ciudad || null, fecha_citacion_entrevista || null,
           fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null,
-          token, fechaVencimiento
+          token, fechaVencimiento, reclutadorId
         ], (err, results) => {
           if (err) {
             console.error('Error creando candidato:', err);
@@ -648,6 +666,8 @@ class CandidatoController {
       
       console.log('Datos extraídos:');
       console.log({ primer_nombre, primer_apellido, cliente, cargo, estado });
+      console.log('Fecha citación entrevista recibida:', fecha_citacion_entrevista);
+      console.log('Tipo de fecha_citacion_entrevista:', typeof fecha_citacion_entrevista);
 
       if (!primer_nombre || !primer_apellido || !numero_celular || !cliente || !cargo) {
         return res.status(400).json({ error: 'Todos los campos requeridos deben completarse' });
