@@ -625,16 +625,28 @@ class CandidatoController {
 
   async editarCandidato(req, res) {
     try {
+      console.log('=== EDITAR CANDIDATO DEBUG ===');
+      console.log('candidatoId:', req.params.candidatoId);
+      console.log('req.body:', req.body);
+      
       const { candidatoId } = req.params;
       const {
         primer_nombre, primer_apellido, email_personal, numero_celular,
         nacionalidad, tipo_documento, numero_documento, cliente, cargo,
         oleada, ciudad, fecha_citacion_entrevista, fuente_reclutamiento,
-        observaciones_llamada, observaciones_generales
+        observaciones_llamada, observaciones_generales, estado
       } = req.body;
+      
+      console.log('Datos extraídos:');
+      console.log({ primer_nombre, primer_apellido, cliente, cargo, estado });
 
       if (!primer_nombre || !primer_apellido || !numero_celular || !cliente || !cargo) {
         return res.status(400).json({ error: 'Todos los campos requeridos deben completarse' });
+      }
+
+      // Validar estado si se proporciona
+      if (estado && !CandidatoModel.getEstadosValidos().includes(estado)) {
+        return res.status(400).json({ error: 'Estado inválido' });
       }
 
       // Verificar duplicados (excluyendo el candidato actual)
@@ -669,7 +681,7 @@ class CandidatoController {
             primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?,
             nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?,
             oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?,
-            observaciones_llamada = ?, observaciones_generales = ?, updated_at = NOW()
+            observaciones_llamada = ?, observaciones_generales = ?, estado = ?, updated_at = NOW()
           WHERE id = ?
         `;
 
@@ -678,7 +690,7 @@ class CandidatoController {
           nacionalidad, tipo_documento, numero_documento, cliente, cargo,
           oleada || null, ciudad || null, fecha_citacion_entrevista || null,
           fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null,
-          candidatoId
+          estado || null, candidatoId
         ], (err, results) => {
           if (err) {
             console.error('Error actualizando candidato:', err);
@@ -727,6 +739,82 @@ class CandidatoController {
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
+    }
+  }
+
+  async cambiarEstado(req, res) {
+    try {
+      const { candidatoId } = req.params;
+      const { estado } = req.body;
+
+      console.log('=== CAMBIAR ESTADO DEBUG ===');
+      console.log('candidatoId:', candidatoId);
+      console.log('nuevo estado:', estado);
+      console.log('tipo de estado:', typeof estado);
+      console.log('estado trimmed:', estado?.trim());
+      console.log('estados válidos:', CandidatoModel.getEstadosValidos());
+      console.log('estado válido?', CandidatoModel.getEstadosValidos().includes(estado));
+      console.log('req.body completo:', JSON.stringify(req.body));
+
+      if (!estado) {
+        console.log('ERROR: Estado no proporcionado');
+        return res.status(400).json({ error: 'Estado es requerido' });
+      }
+
+      // Limpiar estado por si tiene espacios
+      const estadoLimpio = estado.trim();
+      console.log('Estado después de limpiar:', estadoLimpio);
+
+      // Validar estado
+      if (!CandidatoModel.getEstadosValidos().includes(estadoLimpio)) {
+        console.log('ERROR: Estado inválido:', estadoLimpio);
+        console.log('Estados válidos disponibles:', CandidatoModel.getEstadosValidos());
+        return res.status(400).json({ 
+          error: 'Estado inválido', 
+          estadoRecibido: estadoLimpio,
+          estadosValidos: CandidatoModel.getEstadosValidos()
+        });
+      }
+
+      // Actualizar solo el estado
+      const query = `UPDATE hyd_candidatos SET estado = ?, updated_at = NOW() WHERE id = ?`;
+      console.log('Query SQL:', query);
+      console.log('Parámetros SQL:', [estadoLimpio, candidatoId]);
+      
+      global.db.query(query, [estadoLimpio, candidatoId], (err, results) => {
+        if (err) {
+          console.error('Error SQL actualizando estado:', err);
+          console.error('Código de error SQL:', err.code);
+          console.error('Mensaje de error SQL:', err.message);
+          return res.status(500).json({ 
+            error: 'Error actualizando estado',
+            sqlError: err.message 
+          });
+        }
+
+        console.log('Resultados SQL:', results);
+        console.log('Filas afectadas:', results.affectedRows);
+
+        if (results.affectedRows === 0) {
+          console.log('ERROR: Candidato no encontrado para ID:', candidatoId);
+          return res.status(404).json({ error: 'Candidato no encontrado' });
+        }
+
+        console.log('Estado actualizado exitosamente para candidato ID:', candidatoId);
+        res.json({ 
+          success: true, 
+          message: 'Estado actualizado exitosamente',
+          candidatoId: candidatoId,
+          nuevoEstado: estadoLimpio
+        });
+      });
+    } catch (error) {
+      console.error('Error en cambiarEstado:', error);
+      console.error('Stack trace:', error.stack);
+      res.status(500).json({ 
+        error: error.message,
+        stack: error.stack 
+      });
     }
   }
 }
