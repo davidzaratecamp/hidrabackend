@@ -20,6 +20,7 @@ router.post('/reenviar-email/:candidatoId', verificarToken, verificarPermiso('re
 router.put('/editar/:candidatoId', verificarToken, verificarPermiso('editar_candidatos'), candidatoController.editarCandidato);
 router.put('/cambiar-estado/:candidatoId', verificarToken, verificarPermiso('editar_candidatos'), candidatoController.cambiarEstado);
 router.put('/fecha-entrevista/:candidatoId', verificarToken, verificarPermiso('agendar_entrevistas'), candidatoController.actualizarFechaEntrevista);
+router.post('/corregir-estados-null', verificarToken, verificarPermiso('editar_candidatos'), candidatoController.corregirEstadosNull);
 
 router.put('/hoja-vida/:token', candidatoController.actualizarHojaVida);
 router.put('/datos-basicos/:token', candidatoController.actualizarDatosBasicos);

@@ -777,6 +777,48 @@ class CandidatoController {
     }
   }
 
+  async corregirEstadosNull(req, res) {
+    try {
+      console.log('=== CORRECCIÓN DE ESTADOS NULL ===');
+      
+      // Primero, mostrar candidatos con estado NULL
+      const checkQuery = `SELECT id, primer_nombre, primer_apellido, estado FROM hyd_candidatos WHERE estado IS NULL OR estado = ''`;
+      
+      global.db.query(checkQuery, (checkErr, checkResults) => {
+        if (checkErr) {
+          return res.status(500).json({ error: 'Error verificando estados null' });
+        }
+        
+        console.log('Candidatos con estado NULL:', checkResults);
+        
+        if (checkResults.length === 0) {
+          return res.json({ message: 'No hay candidatos con estado NULL', candidatos_afectados: 0 });
+        }
+        
+        // Actualizar candidatos con estado NULL a 'nuevo'
+        const updateQuery = `UPDATE hyd_candidatos SET estado = 'nuevo' WHERE estado IS NULL OR estado = ''`;
+        
+        global.db.query(updateQuery, (updateErr, updateResults) => {
+          if (updateErr) {
+            console.error('Error actualizando estados:', updateErr);
+            return res.status(500).json({ error: 'Error actualizando estados' });
+          }
+          
+          console.log('Candidatos actualizados:', updateResults.affectedRows);
+          
+          res.json({ 
+            message: 'Estados NULL corregidos exitosamente',
+            candidatos_afectados: updateResults.affectedRows,
+            candidatos_encontrados: checkResults
+          });
+        });
+      });
+    } catch (error) {
+      console.error('Error en corregirEstadosNull:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
   async actualizarFechaEntrevista(req, res) {
     try {
       const { candidatoId } = req.params;
