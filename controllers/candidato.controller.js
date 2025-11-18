@@ -674,24 +674,53 @@ class CandidatoController {
           }
         }
 
-        // Actualizar candidato
-        const query = `
-          UPDATE hyd_candidatos 
-          SET 
-            primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?,
-            nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?,
-            oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?,
-            observaciones_llamada = ?, observaciones_generales = ?, estado = ?, updated_at = NOW()
-          WHERE id = ?
-        `;
+        // Actualizar candidato (solo actualizar estado si se proporciona explícitamente)
+        let query, queryParams;
+        
+        if (estado !== undefined && estado !== null && estado !== '') {
+          // Si se proporciona estado, incluirlo en la actualización
+          query = `
+            UPDATE hyd_candidatos 
+            SET 
+              primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?,
+              nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?,
+              oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?,
+              observaciones_llamada = ?, observaciones_generales = ?, estado = ?, updated_at = NOW()
+            WHERE id = ?
+          `;
+          
+          queryParams = [
+            primer_nombre, primer_apellido, email_personal, numero_celular,
+            nacionalidad, tipo_documento, numero_documento, cliente, cargo,
+            oleada || null, ciudad || null, fecha_citacion_entrevista || null,
+            fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null,
+            estado, candidatoId
+          ];
+        } else {
+          // Si no se proporciona estado, no actualizarlo (mantener el estado actual)
+          query = `
+            UPDATE hyd_candidatos 
+            SET 
+              primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?,
+              nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?,
+              oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?,
+              observaciones_llamada = ?, observaciones_generales = ?, updated_at = NOW()
+            WHERE id = ?
+          `;
+          
+          queryParams = [
+            primer_nombre, primer_apellido, email_personal, numero_celular,
+            nacionalidad, tipo_documento, numero_documento, cliente, cargo,
+            oleada || null, ciudad || null, fecha_citacion_entrevista || null,
+            fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null,
+            candidatoId
+          ];
+        }
 
-        global.db.query(query, [
-          primer_nombre, primer_apellido, email_personal, numero_celular,
-          nacionalidad, tipo_documento, numero_documento, cliente, cargo,
-          oleada || null, ciudad || null, fecha_citacion_entrevista || null,
-          fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null,
-          estado || null, candidatoId
-        ], (err, results) => {
+        console.log('Query a ejecutar:', query);
+        console.log('Parámetros:', queryParams);
+
+        global.db.query(query, queryParams, (err, results) => {
           if (err) {
             console.error('Error actualizando candidato:', err);
             return res.status(500).json({ error: 'Error actualizando candidato' });
