@@ -64,7 +64,6 @@ class EmailService {
           <div style="background: #e3f2fd; padding: 15px; border-radius: 6px; margin: 20px 0;">
             <p><strong>📅 Información importante:</strong></p>
             <ul>
-              <li>Tienes <strong>30 días</strong> para completar todos los formularios</li>
               <li>Puedes guardar y continuar en otro momento</li>
               <li>Los formularios deben completarse en orden secuencial</li>
               <li>Al finalizar recibirás una confirmación</li>
