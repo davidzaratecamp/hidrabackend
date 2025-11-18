@@ -46,7 +46,7 @@ class CandidatoController {
       }
       
       // Obtener el ID del reclutador desde el token JWT
-      const reclutadorId = req.user.id;
+      const reclutadorId = req.usuario.id;
       
       const query = `
         SELECT 
@@ -83,7 +83,7 @@ class CandidatoController {
   async getResumenEstados(req, res) {
     try {
       // Obtener el ID del reclutador desde el token JWT
-      const reclutadorId = req.user.id;
+      const reclutadorId = req.usuario.id;
       
       const query = `
         SELECT estado, COUNT(*) as cantidad 
@@ -127,7 +127,7 @@ class CandidatoController {
   async getPerfilCompleto(req, res) {
     try {
       const { candidatoId } = req.params;
-      const reclutadorId = req.user.id;
+      const reclutadorId = req.usuario.id;
       
       // Verificar que el candidato pertenece al reclutador o es compartido (NULL)
       const query = 'SELECT * FROM hyd_candidatos WHERE id = ? AND (reclutador_id = ? OR reclutador_id IS NULL)';
@@ -604,7 +604,7 @@ class CandidatoController {
         fechaVencimiento.setDate(fechaVencimiento.getDate() + 30); // 30 días
 
         // Obtener el ID del reclutador desde el token JWT
-        const reclutadorId = req.user.id;
+        const reclutadorId = req.usuario.id;
         
         const query = `
           INSERT INTO hyd_candidatos (
