@@ -1,4 +1,6 @@
 class CandidatoModel {
+  // Estados válidos del candidato (sincronizado con producción - Nov 2024)
+  // IMPORTANTE: Este array debe coincidir exactamente con el ENUM de la base de datos
   static getEstadosValidos() {
     return [
       'nuevo',

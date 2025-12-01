@@ -15,4 +15,10 @@ router.post('/cambiar-password', verificarToken, authController.cambiarPassword)
 router.get('/usuarios', verificarToken, verificarRol('administrador'), authController.obtenerUsuarios);
 router.post('/usuarios', verificarToken, verificarRol('administrador'), authController.crearUsuario);
 
+// Rutas específicas para gestión de reclutadores
+router.get('/admin/reclutadores', verificarToken, verificarRol('administrador'), authController.obtenerReclutadores);
+router.post('/admin/reclutadores', verificarToken, verificarRol('administrador'), authController.crearReclutador);
+router.delete('/admin/reclutadores/:reclutadorId', verificarToken, verificarRol('administrador'), authController.eliminarReclutador);
+router.post('/admin/reasignar-candidatos', verificarToken, verificarRol('administrador'), authController.reasignarCandidatos);
+
 module.exports = router;

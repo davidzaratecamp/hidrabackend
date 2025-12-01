@@ -103,8 +103,27 @@ CREATE TABLE hyd_candidatos (
     token_acceso VARCHAR(255) NULL UNIQUE,
     fecha_vencimiento_token DATETIME NULL,
     
-    -- Estado del candidato
-    estado ENUM('nuevo', 'formularios_enviados', 'formularios_completados', 'citado', 'entrevistado', 'aprobado', 'rechazado', 'contratado') DEFAULT 'nuevo',
+    -- Estado del candidato (Estados completos según producción)
+    estado ENUM(
+        'nuevo', 
+        'contacto_fallido', 
+        'no_contesta', 
+        'reagendar', 
+        'no_interesado', 
+        'numero_incorrecto', 
+        'contacto_exitoso', 
+        'formularios_enviados', 
+        'formularios_completados', 
+        'citado', 
+        'no_asistio', 
+        'entrevistado', 
+        'aprobado', 
+        'rechazado', 
+        'contratado'
+    ) DEFAULT 'nuevo',
+    
+    -- Relación con reclutador (IMPORTANTE: Campo requerido en producción)
+    reclutador_id INT NULL,
     
     -- Timestamps
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -115,7 +134,11 @@ CREATE TABLE hyd_candidatos (
     INDEX idx_estado (estado),
     INDEX idx_cliente (cliente),
     INDEX idx_token (token_acceso),
-    INDEX idx_created_at (created_at)
+    INDEX idx_created_at (created_at),
+    INDEX idx_reclutador (reclutador_id),
+    
+    -- Clave foránea para integridad referencial
+    FOREIGN KEY (reclutador_id) REFERENCES hyd_usuarios(id) ON DELETE SET NULL
 );
 
 -- =====================================================
