@@ -45,7 +45,7 @@ class CandidatoController {
         return res.status(400).json({ error: 'Estado inválido' });
       }
       
-      // Obtener el ID del reclutador desde el token JWT
+      // Solo mostrar candidatos del reclutador actual
       const reclutadorId = req.usuario.id;
       
       const query = `
@@ -57,7 +57,7 @@ class CandidatoController {
           formulario_personal_completado, formulario_consentimiento_completado,
           updated_at
         FROM hyd_candidatos 
-        WHERE estado = ? AND (reclutador_id = ? OR reclutador_id IS NULL)
+        WHERE estado = ? AND reclutador_id = ?
         ORDER BY updated_at DESC
       `;
       
@@ -82,13 +82,13 @@ class CandidatoController {
 
   async getResumenEstados(req, res) {
     try {
-      // Obtener el ID del reclutador desde el token JWT
+      // Solo contar candidatos del reclutador actual
       const reclutadorId = req.usuario.id;
       
       const query = `
         SELECT estado, COUNT(*) as cantidad 
         FROM hyd_candidatos 
-        WHERE reclutador_id = ? OR reclutador_id IS NULL
+        WHERE reclutador_id = ?
         GROUP BY estado
       `;
       
@@ -129,8 +129,8 @@ class CandidatoController {
       const { candidatoId } = req.params;
       const reclutadorId = req.usuario.id;
       
-      // Verificar que el candidato pertenece al reclutador o es compartido (NULL)
-      const query = 'SELECT * FROM hyd_candidatos WHERE id = ? AND (reclutador_id = ? OR reclutador_id IS NULL)';
+      // Solo permitir acceso a candidatos del reclutador actual
+      const query = 'SELECT * FROM hyd_candidatos WHERE id = ? AND reclutador_id = ?';
       
       global.db.query(query, [candidatoId, reclutadorId], (err, results) => {
         if (err) {
@@ -158,18 +158,21 @@ class CandidatoController {
 
   async getEstadosEnTiempo(req, res) {
     try {
+      // Solo mostrar estadísticas del reclutador actual
+      const reclutadorId = req.usuario.id;
+      
       const query = `
         SELECT 
           estado,
           DATE(created_at) as fecha,
           COUNT(*) as cantidad
         FROM hyd_candidatos 
-        WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) AND reclutador_id = ?
         GROUP BY estado, DATE(created_at)
         ORDER BY fecha DESC
       `;
       
-      global.db.query(query, (err, results) => {
+      global.db.query(query, [reclutadorId], (err, results) => {
         if (err) {
           return res.status(500).json({ error: 'Error de base de datos' });
         }
@@ -183,6 +186,9 @@ class CandidatoController {
 
   async getEstadisticasClientes(req, res) {
     try {
+      // Solo mostrar estadísticas del reclutador actual
+      const reclutadorId = req.usuario.id;
+      
       const query = `
         SELECT 
           cliente,
@@ -190,11 +196,12 @@ class CandidatoController {
           SUM(CASE WHEN estado = 'contratado' THEN 1 ELSE 0 END) as contratados,
           SUM(CASE WHEN estado = 'formularios_completados' THEN 1 ELSE 0 END) as completados
         FROM hyd_candidatos 
+        WHERE reclutador_id = ?
         GROUP BY cliente
         ORDER BY total_candidatos DESC
       `;
       
-      global.db.query(query, (err, results) => {
+      global.db.query(query, [reclutadorId], (err, results) => {
         if (err) {
           return res.status(500).json({ error: 'Error de base de datos' });
         }
@@ -208,17 +215,21 @@ class CandidatoController {
 
   async getEstadisticasCargos(req, res) {
     try {
+      // Solo mostrar estadísticas del reclutador actual
+      const reclutadorId = req.usuario.id;
+      
       const query = `
         SELECT 
           cargo,
           COUNT(*) as cantidad
         FROM hyd_candidatos 
+        WHERE reclutador_id = ?
         GROUP BY cargo
         ORDER BY cantidad DESC
         LIMIT 10
       `;
       
-      global.db.query(query, (err, results) => {
+      global.db.query(query, [reclutadorId], (err, results) => {
         if (err) {
           return res.status(500).json({ error: 'Error de base de datos' });
         }
@@ -232,6 +243,9 @@ class CandidatoController {
 
   async getProgresoFormularios(req, res) {
     try {
+      // Solo mostrar progreso del reclutador actual
+      const reclutadorId = req.usuario.id;
+      
       const query = `
         SELECT 
           (formulario_hoja_vida_completado + formulario_datos_basicos_completado + 
@@ -239,11 +253,12 @@ class CandidatoController {
            formulario_personal_completado + formulario_consentimiento_completado) as progreso,
           COUNT(*) as cantidad
         FROM hyd_candidatos 
+        WHERE reclutador_id = ?
         GROUP BY progreso
         ORDER BY progreso
       `;
       
-      global.db.query(query, (err, results) => {
+      global.db.query(query, [reclutadorId], (err, results) => {
         if (err) {
           return res.status(500).json({ error: 'Error de base de datos' });
         }
@@ -258,16 +273,18 @@ class CandidatoController {
   async reenviarEmail(req, res) {
     try {
       const { candidatoId } = req.params;
+      const reclutadorId = req.usuario.id;
       
-      const query = 'SELECT * FROM hyd_candidatos WHERE id = ?';
+      // Solo permitir reenvío de emails de candidatos del reclutador actual
+      const query = 'SELECT * FROM hyd_candidatos WHERE id = ? AND reclutador_id = ?';
       
-      global.db.query(query, [candidatoId], async (err, results) => {
+      global.db.query(query, [candidatoId, reclutadorId], async (err, results) => {
         if (err) {
           return res.status(500).json({ error: 'Error de base de datos' });
         }
         
         if (results.length === 0) {
-          return res.status(404).json({ error: 'Candidato no encontrado' });
+          return res.status(404).json({ error: 'Candidato no encontrado o no tienes acceso' });
         }
         
         const candidato = results[0];
@@ -275,10 +292,10 @@ class CandidatoController {
         const updateQuery = `
           UPDATE hyd_candidatos 
           SET estado = 'formularios_enviados', updated_at = NOW()
-          WHERE id = ?
+          WHERE id = ? AND reclutador_id = ?
         `;
         
-        global.db.query(updateQuery, [candidatoId], async (updateErr) => {
+        global.db.query(updateQuery, [candidatoId, reclutadorId], async (updateErr) => {
           if (updateErr) {
             return res.status(500).json({ error: 'Error actualizando estado' });
           }
@@ -568,11 +585,17 @@ class CandidatoController {
         primer_nombre, primer_apellido, email_personal, numero_celular,
         nacionalidad, tipo_documento, numero_documento, cliente, cargo,
         oleada, ciudad, fecha_citacion_entrevista, fuente_reclutamiento,
-        observaciones_llamada, observaciones_generales
+        observaciones_llamada, observaciones_generales, estado
       } = req.body;
 
       if (!primer_nombre || !primer_apellido || !numero_celular || !cliente || !cargo) {
         return res.status(400).json({ error: 'Todos los campos requeridos deben completarse' });
+      }
+
+      // Validación condicional del número de documento
+      // Si el estado es 'contacto_exitoso', el número de documento es obligatorio
+      if (estado === 'contacto_exitoso' && !numero_documento) {
+        return res.status(400).json({ error: 'El número de identificación es requerido cuando el estado es "contacto exitoso"' });
       }
 
       // Verificar duplicados (email y cédula)
@@ -603,7 +626,7 @@ class CandidatoController {
         const fechaVencimiento = new Date();
         fechaVencimiento.setDate(fechaVencimiento.getDate() + 30); // 30 días
 
-        // Obtener el ID del reclutador desde el token JWT
+        // Asignar candidato al reclutador actual
         const reclutadorId = req.usuario.id;
         
         const query = `
@@ -613,7 +636,7 @@ class CandidatoController {
             oleada, ciudad, fecha_citacion_entrevista, fuente_reclutamiento,
             observaciones_llamada, observaciones_generales, token_acceso, fecha_vencimiento_token,
             estado, reclutador_id, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'nuevo', ?, NOW(), NOW())
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
         `;
 
         console.log('Creando candidato para reclutador ID:', reclutadorId);
@@ -623,7 +646,7 @@ class CandidatoController {
           nacionalidad, tipo_documento, numero_documento || null, cliente, cargo,
           oleada || null, ciudad || null, fecha_citacion_entrevista || null,
           fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null,
-          token, fechaVencimiento, reclutadorId
+          token, fechaVencimiento, estado || 'nuevo', reclutadorId
         ], (err, results) => {
           if (err) {
             console.error('Error creando candidato:', err);
@@ -640,7 +663,7 @@ class CandidatoController {
               cliente,
               cargo,
               token_acceso: token,
-              estado: 'nuevo'
+              estado: estado || 'nuevo'
             }
           });
         });
@@ -652,22 +675,15 @@ class CandidatoController {
 
   async editarCandidato(req, res) {
     try {
-      console.log('=== EDITAR CANDIDATO DEBUG ===');
-      console.log('candidatoId:', req.params.candidatoId);
-      console.log('req.body:', req.body);
-      
       const { candidatoId } = req.params;
+      const reclutadorId = req.usuario.id;
+      
       const {
         primer_nombre, primer_apellido, email_personal, numero_celular,
         nacionalidad, tipo_documento, numero_documento, cliente, cargo,
         oleada, ciudad, fecha_citacion_entrevista, fuente_reclutamiento,
         observaciones_llamada, observaciones_generales, estado
       } = req.body;
-      
-      console.log('Datos extraídos:');
-      console.log({ primer_nombre, primer_apellido, cliente, cargo, estado });
-      console.log('Fecha citación entrevista recibida:', fecha_citacion_entrevista);
-      console.log('Tipo de fecha_citacion_entrevista:', typeof fecha_citacion_entrevista);
 
       if (!primer_nombre || !primer_apellido || !numero_celular || !cliente || !cargo) {
         return res.status(400).json({ error: 'Todos los campos requeridos deben completarse' });
@@ -678,90 +694,100 @@ class CandidatoController {
         return res.status(400).json({ error: 'Estado inválido' });
       }
 
-      // Verificar duplicados (excluyendo el candidato actual)
-      const checkDuplicatesQuery = `
-        SELECT id, email_personal, numero_documento 
-        FROM hyd_candidatos 
-        WHERE id != ? AND (
-          (email_personal = ? AND email_personal IS NOT NULL AND email_personal != '') 
-          OR (numero_documento = ? AND numero_documento IS NOT NULL AND numero_documento != '')
-        )
-      `;
+      // Verificar que el candidato pertenece al reclutador
+      const checkOwnershipQuery = 'SELECT id FROM hyd_candidatos WHERE id = ? AND reclutador_id = ?';
       
-      global.db.query(checkDuplicatesQuery, [candidatoId, email_personal || '', numero_documento || ''], (checkErr, checkResults) => {
-        if (checkErr) {
-          return res.status(500).json({ error: 'Error verificando duplicados' });
+      global.db.query(checkOwnershipQuery, [candidatoId, reclutadorId], (ownerErr, ownerResults) => {
+        if (ownerErr) {
+          return res.status(500).json({ error: 'Error verificando pertenencia' });
         }
         
-        if (checkResults.length > 0) {
-          const existingCandidate = checkResults[0];
-          if (existingCandidate.email_personal === email_personal && email_personal) {
-            return res.status(400).json({ error: 'Ya existe un candidato con este email' });
-          }
-          if (existingCandidate.numero_documento === numero_documento && numero_documento) {
-            return res.status(400).json({ error: 'Ya existe un candidato con esta cédula' });
-          }
+        if (ownerResults.length === 0) {
+          return res.status(404).json({ error: 'Candidato no encontrado o no tienes acceso a este candidato' });
         }
 
-        // Actualizar candidato (solo actualizar estado si se proporciona explícitamente)
-        let query, queryParams;
+        // Verificar duplicados (excluyendo el candidato actual)
+        const checkDuplicatesQuery = `
+          SELECT id, email_personal, numero_documento 
+          FROM hyd_candidatos 
+          WHERE id != ? AND (
+            (email_personal = ? AND email_personal IS NOT NULL AND email_personal != '') 
+            OR (numero_documento = ? AND numero_documento IS NOT NULL AND numero_documento != '')
+          )
+        `;
         
-        if (estado !== undefined && estado !== null && estado !== '') {
-          // Si se proporciona estado, incluirlo en la actualización
-          query = `
-            UPDATE hyd_candidatos 
-            SET 
-              primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?,
-              nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?,
-              oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?,
-              observaciones_llamada = ?, observaciones_generales = ?, estado = ?, updated_at = NOW()
-            WHERE id = ?
-          `;
+        global.db.query(checkDuplicatesQuery, [candidatoId, email_personal || '', numero_documento || ''], (checkErr, checkResults) => {
+          if (checkErr) {
+            return res.status(500).json({ error: 'Error verificando duplicados' });
+          }
           
-          queryParams = [
-            primer_nombre, primer_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular,
-            nacionalidad, tipo_documento, numero_documento || null, cliente, cargo,
-            oleada || null, ciudad || null, fecha_citacion_entrevista || null,
-            fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null,
-            estado, candidatoId
-          ];
-        } else {
-          // Si no se proporciona estado, no actualizarlo (mantener el estado actual)
-          query = `
-            UPDATE hyd_candidatos 
-            SET 
-              primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?,
-              nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?,
-              oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?,
-              observaciones_llamada = ?, observaciones_generales = ?, updated_at = NOW()
-            WHERE id = ?
-          `;
-          
-          queryParams = [
-            primer_nombre, primer_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular,
-            nacionalidad, tipo_documento, numero_documento || null, cliente, cargo,
-            oleada || null, ciudad || null, fecha_citacion_entrevista || null,
-            fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null,
-            candidatoId
-          ];
-        }
-
-        console.log('Query a ejecutar:', query);
-        console.log('Parámetros:', queryParams);
-
-        global.db.query(query, queryParams, (err, results) => {
-          if (err) {
-            console.error('Error actualizando candidato:', err);
-            return res.status(500).json({ error: 'Error actualizando candidato' });
+          if (checkResults.length > 0) {
+            const existingCandidate = checkResults[0];
+            if (existingCandidate.email_personal === email_personal && email_personal) {
+              return res.status(400).json({ error: 'Ya existe un candidato con este email' });
+            }
+            if (existingCandidate.numero_documento === numero_documento && numero_documento) {
+              return res.status(400).json({ error: 'Ya existe un candidato con esta cédula' });
+            }
           }
 
-          if (results.affectedRows === 0) {
-            return res.status(404).json({ error: 'Candidato no encontrado' });
+          // Actualizar candidato
+          let query, queryParams;
+          
+          if (estado !== undefined && estado !== null && estado !== '') {
+            // Si se proporciona estado, incluirlo en la actualización
+            query = `
+              UPDATE hyd_candidatos 
+              SET 
+                primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?,
+                nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?,
+                oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?,
+                observaciones_llamada = ?, observaciones_generales = ?, estado = ?, updated_at = NOW()
+              WHERE id = ? AND reclutador_id = ?
+            `;
+            
+            queryParams = [
+              primer_nombre, primer_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular,
+              nacionalidad, tipo_documento, numero_documento || null, cliente, cargo,
+              oleada || null, ciudad || null, fecha_citacion_entrevista || null,
+              fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null,
+              estado, candidatoId, reclutadorId
+            ];
+          } else {
+            // Si no se proporciona estado, no actualizarlo (mantener el estado actual)
+            query = `
+              UPDATE hyd_candidatos 
+              SET 
+                primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?,
+                nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?,
+                oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?,
+                observaciones_llamada = ?, observaciones_generales = ?, updated_at = NOW()
+              WHERE id = ? AND reclutador_id = ?
+            `;
+            
+            queryParams = [
+              primer_nombre, primer_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular,
+              nacionalidad, tipo_documento, numero_documento || null, cliente, cargo,
+              oleada || null, ciudad || null, fecha_citacion_entrevista || null,
+              fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null,
+              candidatoId, reclutadorId
+            ];
           }
 
-          res.json({
-            message: 'Candidato actualizado exitosamente',
-            candidatoId: candidatoId
+          global.db.query(query, queryParams, (err, results) => {
+            if (err) {
+              console.error('Error actualizando candidato:', err);
+              return res.status(500).json({ error: 'Error actualizando candidato' });
+            }
+
+            if (results.affectedRows === 0) {
+              return res.status(404).json({ error: 'Candidato no encontrado o no tienes acceso' });
+            }
+
+            res.json({
+              message: 'Candidato actualizado exitosamente',
+              candidatoId: candidatoId
+            });
           });
         });
       });
@@ -770,26 +796,26 @@ class CandidatoController {
     }
   }
 
-
   async actualizarFechaEntrevista(req, res) {
     try {
       const { candidatoId } = req.params;
       const { fecha_citacion_entrevista } = req.body;
+      const reclutadorId = req.usuario.id;
 
       const query = `
         UPDATE hyd_candidatos 
         SET fecha_citacion_entrevista = ?, updated_at = NOW()
-        WHERE id = ?
+        WHERE id = ? AND reclutador_id = ?
       `;
 
-      global.db.query(query, [fecha_citacion_entrevista || null, candidatoId], (err, results) => {
+      global.db.query(query, [fecha_citacion_entrevista || null, candidatoId, reclutadorId], (err, results) => {
         if (err) {
           console.error('Error actualizando fecha de entrevista:', err);
           return res.status(500).json({ error: 'Error actualizando fecha de entrevista' });
         }
 
         if (results.affectedRows === 0) {
-          return res.status(404).json({ error: 'Candidato no encontrado' });
+          return res.status(404).json({ error: 'Candidato no encontrado o no tienes acceso' });
         }
 
         res.json({
@@ -805,63 +831,39 @@ class CandidatoController {
     try {
       const { candidatoId } = req.params;
       const { estado } = req.body;
-
-      console.log('=== CAMBIAR ESTADO DEBUG ===');
-      console.log('candidatoId:', candidatoId);
-      console.log('nuevo estado:', estado);
-      console.log('tipo de estado:', typeof estado);
-      console.log('estado trimmed:', estado?.trim());
-      console.log('estados válidos:', CandidatoModel.getEstadosValidos());
-      console.log('estado válido?', CandidatoModel.getEstadosValidos().includes(estado));
-      console.log('req.body completo:', JSON.stringify(req.body));
+      const reclutadorId = req.usuario.id;
 
       if (!estado) {
-        console.log('ERROR: Estado no proporcionado');
         return res.status(400).json({ error: 'Estado es requerido' });
       }
 
-      // Limpiar estado por si tiene espacios
       const estadoLimpio = estado.trim();
-      console.log('Estado después de limpiar:', estadoLimpio);
 
       // Validar estado
       if (!CandidatoModel.getEstadosValidos().includes(estadoLimpio)) {
-        console.log('ERROR: Estado inválido:', estadoLimpio);
-        console.log('Estados válidos disponibles:', CandidatoModel.getEstadosValidos());
         return res.status(400).json({ 
-          error: 'Estado inválido', 
-          estadoRecibido: estadoLimpio,
+          error: 'Estado inválido',
           estadosValidos: CandidatoModel.getEstadosValidos()
         });
       }
 
-      // Actualizar solo el estado
-      const query = `UPDATE hyd_candidatos SET estado = ?, updated_at = NOW() WHERE id = ?`;
-      console.log('Query SQL:', query);
-      console.log('Parámetros SQL:', [estadoLimpio, candidatoId]);
-      
-      global.db.query(query, [estadoLimpio, candidatoId], (err, results) => {
-        if (err) {
-          console.error('Error SQL actualizando estado:', err);
-          console.error('Código de error SQL:', err.code);
-          console.error('Mensaje de error SQL:', err.message);
-          return res.status(500).json({ 
-            error: 'Error actualizando estado',
-            sqlError: err.message 
-          });
-        }
+      const query = `
+        UPDATE hyd_candidatos 
+        SET estado = ?, updated_at = NOW()
+        WHERE id = ? AND reclutador_id = ?
+      `;
 
-        console.log('Resultados SQL:', results);
-        console.log('Filas afectadas:', results.affectedRows);
+      global.db.query(query, [estadoLimpio, candidatoId, reclutadorId], (err, results) => {
+        if (err) {
+          console.error('Error cambiando estado:', err);
+          return res.status(500).json({ error: 'Error cambiando estado del candidato' });
+        }
 
         if (results.affectedRows === 0) {
-          console.log('ERROR: Candidato no encontrado para ID:', candidatoId);
-          return res.status(404).json({ error: 'Candidato no encontrado' });
+          return res.status(404).json({ error: 'Candidato no encontrado o no tienes acceso' });
         }
 
-        console.log('Estado actualizado exitosamente para candidato ID:', candidatoId);
-        res.json({ 
-          success: true, 
+        res.json({
           message: 'Estado actualizado exitosamente',
           candidatoId: candidatoId,
           nuevoEstado: estadoLimpio
@@ -869,11 +871,7 @@ class CandidatoController {
       });
     } catch (error) {
       console.error('Error en cambiarEstado:', error);
-      console.error('Stack trace:', error.stack);
-      res.status(500).json({ 
-        error: error.message,
-        stack: error.stack 
-      });
+      res.status(500).json({ error: error.message });
     }
   }
 }
