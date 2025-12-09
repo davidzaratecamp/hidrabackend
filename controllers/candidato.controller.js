@@ -101,7 +101,7 @@ class CandidatoController {
         
         // Incluir todos los estados visibles en el frontend
         const estadosVisibles = [
-          'nuevo', 'contacto_exitoso', 'formularios_enviados', 'formularios_completados',
+          'contacto_exitoso', 'formularios_enviados', 'formularios_completados',
           'citado', 'entrevistado', 'contacto_fallido', 'no_contesta', 'reagendar', 
           'no_interesado', 'numero_incorrecto', 'no_asistio', 'aprobado', 'rechazado', 'contratado'
         ];
