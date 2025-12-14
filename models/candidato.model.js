@@ -17,6 +17,8 @@ class CandidatoModel {
       'entrevistado', 
       'aprobado',
       'rechazado',
+      'aprobado_final',
+      'rechazado_final',
       'contratado'
     ];
   }
@@ -92,6 +94,16 @@ class CandidatoModel {
         label: 'Rechazado', 
         color: 'bg-red-100 text-red-800',
         descripcion: 'Candidato rechazado'
+      },
+      'aprobado_final': { 
+        label: 'Aprobado Final', 
+        color: 'bg-emerald-100 text-emerald-800',
+        descripcion: 'Candidato aprobado finalmente para el trabajo'
+      },
+      'rechazado_final': { 
+        label: 'Rechazado Final', 
+        color: 'bg-red-100 text-red-800',
+        descripcion: 'Candidato rechazado finalmente por decisión del psicólogo'
       },
       'contratado': { 
         label: 'Contratado', 

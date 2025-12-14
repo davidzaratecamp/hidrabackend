@@ -45,25 +45,46 @@ class CandidatoController {
         return res.status(400).json({ error: 'Estado inválido' });
       }
       
-      // Solo mostrar candidatos del reclutador actual
-      const reclutadorId = req.usuario.id;
+      // Solo administradores ven todos los candidatos
+      // Reclutadores y usuarios de selección solo ven sus candidatos
+      let query, queryParams;
       
-      const query = `
-        SELECT 
-          id, primer_nombre, primer_apellido, email_personal, numero_celular,
-          cliente, cargo, oleada, fecha_citacion_entrevista, estado, reclutador_id,
-          formulario_hoja_vida_completado, formulario_datos_basicos_completado,
-          formulario_estudios_completado, formulario_experiencia_completado,
-          formulario_personal_completado, formulario_consentimiento_completado,
-          updated_at
-        FROM hyd_candidatos 
-        WHERE estado = ? AND reclutador_id = ?
-        ORDER BY updated_at DESC
-      `;
+      if (req.usuario.rol === 'administrador') {
+        // Administradores ven todos los candidatos
+        query = `
+          SELECT 
+            id, primer_nombre, primer_apellido, email_personal, numero_celular,
+            cliente, cargo, oleada, fecha_citacion_entrevista, estado, reclutador_id,
+            formulario_hoja_vida_completado, formulario_datos_basicos_completado,
+            formulario_estudios_completado, formulario_experiencia_completado,
+            formulario_personal_completado, formulario_consentimiento_completado,
+            updated_at
+          FROM hyd_candidatos 
+          WHERE estado = ?
+          ORDER BY updated_at DESC
+        `;
+        queryParams = [estado];
+      } else {
+        // Reclutadores y usuarios de selección solo ven sus candidatos
+        const userId = req.usuario.id;
+        query = `
+          SELECT 
+            id, primer_nombre, primer_apellido, email_personal, numero_celular,
+            cliente, cargo, oleada, fecha_citacion_entrevista, estado, reclutador_id,
+            formulario_hoja_vida_completado, formulario_datos_basicos_completado,
+            formulario_estudios_completado, formulario_experiencia_completado,
+            formulario_personal_completado, formulario_consentimiento_completado,
+            updated_at
+          FROM hyd_candidatos 
+          WHERE estado = ? AND reclutador_id = ?
+          ORDER BY updated_at DESC
+        `;
+        queryParams = [estado, userId];
+      }
       
-      console.log('Obteniendo candidatos para reclutador ID:', reclutadorId, 'y estado:', estado);
+      console.log('Obteniendo candidatos para usuario:', req.usuario.email, 'rol:', req.usuario.rol, 'estado:', estado);
       
-      global.db.query(query, [estado, reclutadorId], (err, results) => {
+      global.db.query(query, queryParams, (err, results) => {
         if (err) {
           return res.status(500).json({ error: 'Error de base de datos' });
         }
@@ -82,19 +103,32 @@ class CandidatoController {
 
   async getResumenEstados(req, res) {
     try {
-      // Solo contar candidatos del reclutador actual
-      const reclutadorId = req.usuario.id;
+      let query, queryParams;
       
-      const query = `
-        SELECT estado, COUNT(*) as cantidad 
-        FROM hyd_candidatos 
-        WHERE reclutador_id = ?
-        GROUP BY estado
-      `;
+      // Solo administradores ven todos los candidatos
+      // Reclutadores y usuarios de selección solo ven sus candidatos
+      if (req.usuario.rol === 'administrador') {
+        query = `
+          SELECT estado, COUNT(*) as cantidad 
+          FROM hyd_candidatos 
+          GROUP BY estado
+        `;
+        queryParams = [];
+      } else {
+        // Solo contar candidatos del usuario actual (reclutador_id)
+        const userId = req.usuario.id;
+        query = `
+          SELECT estado, COUNT(*) as cantidad 
+          FROM hyd_candidatos 
+          WHERE reclutador_id = ?
+          GROUP BY estado
+        `;
+        queryParams = [userId];
+      }
       
-      console.log('Obteniendo resumen de estados para reclutador ID:', reclutadorId);
+      console.log('Obteniendo resumen de estados para usuario:', req.usuario.email, 'rol:', req.usuario.rol);
       
-      global.db.query(query, [reclutadorId], (err, results) => {
+      global.db.query(query, queryParams, (err, results) => {
         if (err) {
           return res.status(500).json({ error: 'Error de base de datos' });
         }
@@ -127,12 +161,20 @@ class CandidatoController {
   async getPerfilCompleto(req, res) {
     try {
       const { candidatoId } = req.params;
-      const reclutadorId = req.usuario.id;
       
-      // Solo permitir acceso a candidatos del reclutador actual
-      const query = 'SELECT * FROM hyd_candidatos WHERE id = ? AND reclutador_id = ?';
+      // Los psicólogos y administradores pueden ver cualquier candidato, los reclutadores solo los suyos
+      let query, queryParams;
       
-      global.db.query(query, [candidatoId, reclutadorId], (err, results) => {
+      if (req.usuario.rol === 'seleccion' || req.usuario.rol === 'administrador') {
+        query = 'SELECT * FROM hyd_candidatos WHERE id = ?';
+        queryParams = [candidatoId];
+      } else {
+        const reclutadorId = req.usuario.id;
+        query = 'SELECT * FROM hyd_candidatos WHERE id = ? AND reclutador_id = ?';
+        queryParams = [candidatoId, reclutadorId];
+      }
+      
+      global.db.query(query, queryParams, (err, results) => {
         if (err) {
           return res.status(500).json({ error: 'Error de base de datos' });
         }
@@ -158,21 +200,36 @@ class CandidatoController {
 
   async getEstadosEnTiempo(req, res) {
     try {
-      // Solo mostrar estadísticas del reclutador actual
-      const reclutadorId = req.usuario.id;
+      let query, queryParams;
       
-      const query = `
-        SELECT 
-          estado,
-          DATE(created_at) as fecha,
-          COUNT(*) as cantidad
-        FROM hyd_candidatos 
-        WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) AND reclutador_id = ?
-        GROUP BY estado, DATE(created_at)
-        ORDER BY fecha DESC
-      `;
+      if (req.usuario.rol === 'administrador') {
+        query = `
+          SELECT 
+            estado,
+            DATE(created_at) as fecha,
+            COUNT(*) as cantidad
+          FROM hyd_candidatos 
+          WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+          GROUP BY estado, DATE(created_at)
+          ORDER BY fecha DESC
+        `;
+        queryParams = [];
+      } else {
+        const userId = req.usuario.id;
+        query = `
+          SELECT 
+            estado,
+            DATE(created_at) as fecha,
+            COUNT(*) as cantidad
+          FROM hyd_candidatos 
+          WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) AND reclutador_id = ?
+          GROUP BY estado, DATE(created_at)
+          ORDER BY fecha DESC
+        `;
+        queryParams = [userId];
+      }
       
-      global.db.query(query, [reclutadorId], (err, results) => {
+      global.db.query(query, queryParams, (err, results) => {
         if (err) {
           return res.status(500).json({ error: 'Error de base de datos' });
         }
@@ -186,22 +243,37 @@ class CandidatoController {
 
   async getEstadisticasClientes(req, res) {
     try {
-      // Solo mostrar estadísticas del reclutador actual
-      const reclutadorId = req.usuario.id;
+      let query, queryParams;
       
-      const query = `
-        SELECT 
-          cliente,
-          COUNT(*) as total_candidatos,
-          SUM(CASE WHEN estado = 'contratado' THEN 1 ELSE 0 END) as contratados,
-          SUM(CASE WHEN estado = 'formularios_completados' THEN 1 ELSE 0 END) as completados
-        FROM hyd_candidatos 
-        WHERE reclutador_id = ?
-        GROUP BY cliente
-        ORDER BY total_candidatos DESC
-      `;
+      if (req.usuario.rol === 'administrador') {
+        query = `
+          SELECT 
+            cliente,
+            COUNT(*) as total_candidatos,
+            SUM(CASE WHEN estado = 'contratado' THEN 1 ELSE 0 END) as contratados,
+            SUM(CASE WHEN estado = 'formularios_completados' THEN 1 ELSE 0 END) as completados
+          FROM hyd_candidatos 
+          GROUP BY cliente
+          ORDER BY total_candidatos DESC
+        `;
+        queryParams = [];
+      } else {
+        const userId = req.usuario.id;
+        query = `
+          SELECT 
+            cliente,
+            COUNT(*) as total_candidatos,
+            SUM(CASE WHEN estado = 'contratado' THEN 1 ELSE 0 END) as contratados,
+            SUM(CASE WHEN estado = 'formularios_completados' THEN 1 ELSE 0 END) as completados
+          FROM hyd_candidatos 
+          WHERE reclutador_id = ?
+          GROUP BY cliente
+          ORDER BY total_candidatos DESC
+        `;
+        queryParams = [userId];
+      }
       
-      global.db.query(query, [reclutadorId], (err, results) => {
+      global.db.query(query, queryParams, (err, results) => {
         if (err) {
           return res.status(500).json({ error: 'Error de base de datos' });
         }
@@ -215,21 +287,35 @@ class CandidatoController {
 
   async getEstadisticasCargos(req, res) {
     try {
-      // Solo mostrar estadísticas del reclutador actual
-      const reclutadorId = req.usuario.id;
+      let query, queryParams;
       
-      const query = `
-        SELECT 
-          cargo,
-          COUNT(*) as cantidad
-        FROM hyd_candidatos 
-        WHERE reclutador_id = ?
-        GROUP BY cargo
-        ORDER BY cantidad DESC
-        LIMIT 10
-      `;
+      if (req.usuario.rol === 'administrador') {
+        query = `
+          SELECT 
+            cargo,
+            COUNT(*) as cantidad
+          FROM hyd_candidatos 
+          GROUP BY cargo
+          ORDER BY cantidad DESC
+          LIMIT 10
+        `;
+        queryParams = [];
+      } else {
+        const userId = req.usuario.id;
+        query = `
+          SELECT 
+            cargo,
+            COUNT(*) as cantidad
+          FROM hyd_candidatos 
+          WHERE reclutador_id = ?
+          GROUP BY cargo
+          ORDER BY cantidad DESC
+          LIMIT 10
+        `;
+        queryParams = [userId];
+      }
       
-      global.db.query(query, [reclutadorId], (err, results) => {
+      global.db.query(query, queryParams, (err, results) => {
         if (err) {
           return res.status(500).json({ error: 'Error de base de datos' });
         }
@@ -243,22 +329,37 @@ class CandidatoController {
 
   async getProgresoFormularios(req, res) {
     try {
-      // Solo mostrar progreso del reclutador actual
-      const reclutadorId = req.usuario.id;
+      let query, queryParams;
       
-      const query = `
-        SELECT 
-          (formulario_hoja_vida_completado + formulario_datos_basicos_completado + 
-           formulario_estudios_completado + formulario_experiencia_completado + 
-           formulario_personal_completado + formulario_consentimiento_completado) as progreso,
-          COUNT(*) as cantidad
-        FROM hyd_candidatos 
-        WHERE reclutador_id = ?
-        GROUP BY progreso
-        ORDER BY progreso
-      `;
+      if (req.usuario.rol === 'administrador') {
+        query = `
+          SELECT 
+            (formulario_hoja_vida_completado + formulario_datos_basicos_completado + 
+             formulario_estudios_completado + formulario_experiencia_completado + 
+             formulario_personal_completado + formulario_consentimiento_completado) as progreso,
+            COUNT(*) as cantidad
+          FROM hyd_candidatos 
+          GROUP BY progreso
+          ORDER BY progreso
+        `;
+        queryParams = [];
+      } else {
+        const userId = req.usuario.id;
+        query = `
+          SELECT 
+            (formulario_hoja_vida_completado + formulario_datos_basicos_completado + 
+             formulario_estudios_completado + formulario_experiencia_completado + 
+             formulario_personal_completado + formulario_consentimiento_completado) as progreso,
+            COUNT(*) as cantidad
+          FROM hyd_candidatos 
+          WHERE reclutador_id = ?
+          GROUP BY progreso
+          ORDER BY progreso
+        `;
+        queryParams = [userId];
+      }
       
-      global.db.query(query, [reclutadorId], (err, results) => {
+      global.db.query(query, queryParams, (err, results) => {
         if (err) {
           return res.status(500).json({ error: 'Error de base de datos' });
         }

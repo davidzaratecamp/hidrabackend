@@ -5,6 +5,7 @@ require('dotenv').config();
 
 const candidatoRoutes = require('./routes/candidato.routes');
 const authRoutes = require('./routes/auth.routes');
+const seleccionRoutes = require('./routes/seleccion.routes');
 
 const app = express();
 
@@ -57,6 +58,7 @@ createConnection();
 
 app.use('/api/candidato', candidatoRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/seleccion', seleccionRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ 

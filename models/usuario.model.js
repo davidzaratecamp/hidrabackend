@@ -19,8 +19,9 @@ class UsuarioModel {
         'editar_candidatos', 'reenviar_emails', 'agendar_entrevistas'
       ],
       seleccion: [
-        'ver_candidatos', 'editar_estados_candidatos', 'ver_perfiles_completos',
-        'generar_reportes_seleccion'
+        'ver_dashboard', 'ver_estadisticas', 'ver_candidatos', 'crear_candidatos', 
+        'editar_candidatos', 'editar_estados_candidatos', 'ver_perfiles_completos', 
+        'generar_reportes_seleccion', 'agendar_entrevistas', 'reenviar_emails'
       ]
     };
     
