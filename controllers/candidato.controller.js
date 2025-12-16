@@ -652,7 +652,10 @@ class CandidatoController {
           consentimiento_aceptado = TRUE,
           formulario_consentimiento_completado = TRUE,
           fecha_completado_consentimiento = NOW(),
-          estado = 'formularios_completados',
+          estado = CASE 
+            WHEN estado IN ('aprobado_final', 'rechazado_final', 'contratado') THEN estado 
+            ELSE 'formularios_completados' 
+          END,
           updated_at = NOW()
         WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
       `;
