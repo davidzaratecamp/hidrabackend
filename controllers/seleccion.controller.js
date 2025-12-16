@@ -17,8 +17,7 @@ class SeleccionController {
         LEFT JOIN hyd_usuarios u ON c.reclutador_id = u.id
         LEFT JOIN hyd_usuarios up ON c.psicologo_decision_id = up.id
         LEFT JOIN hyd_oleadas o ON c.oleada_seleccion_id = o.id
-        WHERE c.estado IN ('citado', 'entrevistado', 'no_asistio', 'rechazado', 'rechazado_final') 
-           OR (c.evaluacion_total IS NOT NULL AND c.aprobacion_final IS NULL)
+        WHERE c.fecha_citacion_entrevista IS NOT NULL
         ORDER BY 
           CASE 
             WHEN c.evaluacion_total IS NOT NULL AND c.aprobacion_final IS NULL THEN 1
