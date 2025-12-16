@@ -45,12 +45,12 @@ class CandidatoController {
         return res.status(400).json({ error: 'Estado inválido' });
       }
       
-      // Solo administradores ven todos los candidatos
-      // Reclutadores y usuarios de selección solo ven sus candidatos
+      // Administradores y usuarios de selección ven todos los candidatos
+      // Reclutadores solo ven sus candidatos
       let query, queryParams;
       
-      if (req.usuario.rol === 'administrador') {
-        // Administradores ven todos los candidatos
+      if (req.usuario.rol === 'administrador' || req.usuario.rol === 'seleccion') {
+        // Administradores y usuarios de selección ven todos los candidatos
         query = `
           SELECT 
             id, primer_nombre, primer_apellido, email_personal, numero_celular,
@@ -65,7 +65,7 @@ class CandidatoController {
         `;
         queryParams = [estado];
       } else {
-        // Reclutadores y usuarios de selección solo ven sus candidatos
+        // Reclutadores solo ven sus candidatos
         const userId = req.usuario.id;
         query = `
           SELECT 
@@ -105,9 +105,9 @@ class CandidatoController {
     try {
       let query, queryParams;
       
-      // Solo administradores ven todos los candidatos
-      // Reclutadores y usuarios de selección solo ven sus candidatos
-      if (req.usuario.rol === 'administrador') {
+      // Administradores y usuarios de selección ven todos los candidatos
+      // Reclutadores solo ven sus candidatos
+      if (req.usuario.rol === 'administrador' || req.usuario.rol === 'seleccion') {
         query = `
           SELECT estado, COUNT(*) as cantidad 
           FROM hyd_candidatos 
@@ -202,7 +202,7 @@ class CandidatoController {
     try {
       let query, queryParams;
       
-      if (req.usuario.rol === 'administrador') {
+      if (req.usuario.rol === 'administrador' || req.usuario.rol === 'seleccion') {
         query = `
           SELECT 
             estado,
@@ -245,7 +245,7 @@ class CandidatoController {
     try {
       let query, queryParams;
       
-      if (req.usuario.rol === 'administrador') {
+      if (req.usuario.rol === 'administrador' || req.usuario.rol === 'seleccion') {
         query = `
           SELECT 
             cliente,
@@ -289,7 +289,7 @@ class CandidatoController {
     try {
       let query, queryParams;
       
-      if (req.usuario.rol === 'administrador') {
+      if (req.usuario.rol === 'administrador' || req.usuario.rol === 'seleccion') {
         query = `
           SELECT 
             cargo,
@@ -331,7 +331,7 @@ class CandidatoController {
     try {
       let query, queryParams;
       
-      if (req.usuario.rol === 'administrador') {
+      if (req.usuario.rol === 'administrador' || req.usuario.rol === 'seleccion') {
         query = `
           SELECT 
             (formulario_hoja_vida_completado + formulario_datos_basicos_completado + 
