@@ -630,6 +630,26 @@ class AuthController {
         return res.status(400).json({ error: 'ID de usuario inválido' });
       }
 
+      // Función helper para desactivar usuario
+      const desactivarUsuario = (id, usuario) => {
+        const updateQuery = 'UPDATE hyd_usuarios SET activo = FALSE, updated_at = NOW() WHERE id = ?';
+        global.db.query(updateQuery, [id], (updateErr, updateResults) => {
+          if (updateErr) {
+            console.error('Error desactivando usuario:', updateErr);
+            return res.status(500).json({ error: 'Error eliminando usuario' });
+          }
+          res.json({
+            message: 'Usuario eliminado exitosamente',
+            usuario: {
+              id: usuario.id,
+              nombre_completo: usuario.nombre_completo,
+              email: usuario.email,
+              rol: usuario.rol
+            }
+          });
+        });
+      };
+
       // Verificar que el usuario existe y es reclutador o seleccion (no admin)
       const checkQuery = 'SELECT id, nombre_completo, email, rol FROM hyd_usuarios WHERE id = ? AND rol IN ("reclutador", "seleccion")';
 
@@ -665,12 +685,11 @@ class AuthController {
               });
             }
 
-            // Desactivar usuario
-            this.desactivarUsuario(usuarioId, usuario, res);
+            desactivarUsuario(usuarioId, usuario);
           });
         } else {
           // Si es seleccion, desactivar directamente
-          this.desactivarUsuario(usuarioId, usuario, res);
+          desactivarUsuario(usuarioId, usuario);
         }
       });
 
@@ -678,27 +697,6 @@ class AuthController {
       console.error('Error eliminando usuario desde selección:', error);
       res.status(500).json({ error: 'Error interno del servidor' });
     }
-  }
-
-  desactivarUsuario(usuarioId, usuario, res) {
-    const updateQuery = 'UPDATE hyd_usuarios SET activo = FALSE, updated_at = NOW() WHERE id = ?';
-
-    global.db.query(updateQuery, [usuarioId], (updateErr, updateResults) => {
-      if (updateErr) {
-        console.error('Error desactivando usuario:', updateErr);
-        return res.status(500).json({ error: 'Error eliminando usuario' });
-      }
-
-      res.json({
-        message: 'Usuario eliminado exitosamente',
-        usuario: {
-          id: usuario.id,
-          nombre_completo: usuario.nombre_completo,
-          email: usuario.email,
-          rol: usuario.rol
-        }
-      });
-    });
   }
 }
 
