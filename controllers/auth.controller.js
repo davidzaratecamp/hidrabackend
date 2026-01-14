@@ -519,11 +519,11 @@ class AuthController {
         return res.status(403).json({ error: 'No tienes permisos para ver usuarios' });
       }
 
-      // Solo mostrar usuarios con rol reclutador o seleccion (no admins)
+      // Solo mostrar usuarios activos con rol reclutador o seleccion (no admins)
       const query = `
         SELECT id, nombre_completo, email, rol, activo, ultimo_acceso, created_at, updated_at
         FROM hyd_usuarios
-        WHERE rol IN ('reclutador', 'seleccion')
+        WHERE rol IN ('reclutador', 'seleccion') AND activo = TRUE
         ORDER BY rol, created_at DESC
       `;
 
