@@ -507,6 +507,199 @@ class AuthController {
       res.status(500).json({ error: 'Error interno del servidor' });
     }
   }
+
+  // ============================================
+  // FUNCIONES PARA ROL SELECCIÓN
+  // ============================================
+
+  async obtenerUsuariosDesdeSeleccion(req, res) {
+    try {
+      // Verificar permisos (seleccion o administrador)
+      if (req.usuario.rol !== 'seleccion' && req.usuario.rol !== 'administrador') {
+        return res.status(403).json({ error: 'No tienes permisos para ver usuarios' });
+      }
+
+      // Solo mostrar usuarios con rol reclutador o seleccion (no admins)
+      const query = `
+        SELECT id, nombre_completo, email, rol, activo, ultimo_acceso, created_at, updated_at
+        FROM hyd_usuarios
+        WHERE rol IN ('reclutador', 'seleccion')
+        ORDER BY rol, created_at DESC
+      `;
+
+      global.db.query(query, (err, results) => {
+        if (err) {
+          console.error('Error obteniendo usuarios:', err);
+          return res.status(500).json({ error: 'Error de base de datos' });
+        }
+
+        const usuarios = results.map(usuario => UsuarioModel.sanitizarUsuario(usuario));
+        res.json(usuarios);
+      });
+
+    } catch (error) {
+      console.error('Error obteniendo usuarios desde selección:', error);
+      res.status(500).json({ error: 'Error interno del servidor' });
+    }
+  }
+
+  async crearUsuarioDesdeSeleccion(req, res) {
+    try {
+      const { nombre_completo, email, password, rol } = req.body;
+
+      // Verificar permisos (seleccion o administrador)
+      if (req.usuario.rol !== 'seleccion' && req.usuario.rol !== 'administrador') {
+        return res.status(403).json({ error: 'No tienes permisos para crear usuarios' });
+      }
+
+      // Validaciones
+      if (!nombre_completo || !email || !password || !rol) {
+        return res.status(400).json({ error: 'Todos los campos son requeridos' });
+      }
+
+      // Solo permitir crear roles reclutador o seleccion (NO administrador)
+      if (rol !== 'reclutador' && rol !== 'seleccion') {
+        return res.status(400).json({ error: 'Solo se pueden crear usuarios con rol reclutador o seleccion' });
+      }
+
+      if (!UsuarioModel.validarEmail(email)) {
+        return res.status(400).json({ error: 'Formato de email inválido' });
+      }
+
+      if (!UsuarioModel.validarPassword(password)) {
+        return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+      }
+
+      // Verificar email único
+      const checkQuery = 'SELECT id FROM hyd_usuarios WHERE email = ?';
+
+      global.db.query(checkQuery, [email], async (checkErr, checkResults) => {
+        if (checkErr) {
+          console.error('Error verificando email:', checkErr);
+          return res.status(500).json({ error: 'Error verificando email' });
+        }
+
+        if (checkResults.length > 0) {
+          return res.status(400).json({ error: 'El email ya está registrado' });
+        }
+
+        // Hash password
+        const passwordHash = await UsuarioModel.hashPassword(password);
+
+        // Crear usuario
+        const insertQuery = `
+          INSERT INTO hyd_usuarios (nombre_completo, email, password_hash, rol, activo, created_at, updated_at)
+          VALUES (?, ?, ?, ?, TRUE, NOW(), NOW())
+        `;
+
+        global.db.query(insertQuery, [nombre_completo, email, passwordHash, rol], (insertErr, insertResults) => {
+          if (insertErr) {
+            console.error('Error creando usuario:', insertErr);
+            return res.status(500).json({ error: 'Error creando usuario' });
+          }
+
+          res.status(201).json({
+            message: 'Usuario creado exitosamente',
+            usuario: {
+              id: insertResults.insertId,
+              nombre_completo,
+              email,
+              rol,
+              activo: true
+            }
+          });
+        });
+      });
+
+    } catch (error) {
+      console.error('Error creando usuario desde selección:', error);
+      res.status(500).json({ error: 'Error interno del servidor' });
+    }
+  }
+
+  async eliminarUsuarioDesdeSeleccion(req, res) {
+    try {
+      const { usuarioId } = req.params;
+
+      // Verificar permisos (seleccion o administrador)
+      if (req.usuario.rol !== 'seleccion' && req.usuario.rol !== 'administrador') {
+        return res.status(403).json({ error: 'No tienes permisos para eliminar usuarios' });
+      }
+
+      if (!usuarioId || isNaN(usuarioId)) {
+        return res.status(400).json({ error: 'ID de usuario inválido' });
+      }
+
+      // Verificar que el usuario existe y es reclutador o seleccion (no admin)
+      const checkQuery = 'SELECT id, nombre_completo, email, rol FROM hyd_usuarios WHERE id = ? AND rol IN ("reclutador", "seleccion")';
+
+      global.db.query(checkQuery, [usuarioId], (checkErr, checkResults) => {
+        if (checkErr) {
+          console.error('Error verificando usuario:', checkErr);
+          return res.status(500).json({ error: 'Error verificando usuario' });
+        }
+
+        if (checkResults.length === 0) {
+          return res.status(404).json({ error: 'Usuario no encontrado o no se puede eliminar' });
+        }
+
+        const usuario = checkResults[0];
+
+        // Si es reclutador, verificar candidatos asignados
+        if (usuario.rol === 'reclutador') {
+          const countQuery = 'SELECT COUNT(*) as count FROM hyd_candidatos WHERE reclutador_id = ?';
+
+          global.db.query(countQuery, [usuarioId], (countErr, countResults) => {
+            if (countErr) {
+              console.error('Error contando candidatos:', countErr);
+              return res.status(500).json({ error: 'Error verificando candidatos asignados' });
+            }
+
+            const candidatosAsignados = countResults[0].count;
+
+            if (candidatosAsignados > 0) {
+              return res.status(400).json({
+                error: 'No se puede eliminar el usuario porque tiene candidatos asignados',
+                candidatos_asignados: candidatosAsignados,
+                mensaje: 'Primero reasigna los candidatos a otro reclutador'
+              });
+            }
+
+            // Desactivar usuario
+            this.desactivarUsuario(usuarioId, usuario, res);
+          });
+        } else {
+          // Si es seleccion, desactivar directamente
+          this.desactivarUsuario(usuarioId, usuario, res);
+        }
+      });
+
+    } catch (error) {
+      console.error('Error eliminando usuario desde selección:', error);
+      res.status(500).json({ error: 'Error interno del servidor' });
+    }
+  }
+
+  desactivarUsuario(usuarioId, usuario, res) {
+    const updateQuery = 'UPDATE hyd_usuarios SET activo = FALSE, updated_at = NOW() WHERE id = ?';
+
+    global.db.query(updateQuery, [usuarioId], (updateErr, updateResults) => {
+      if (updateErr) {
+        console.error('Error desactivando usuario:', updateErr);
+        return res.status(500).json({ error: 'Error eliminando usuario' });
+      }
+
+      res.json({
+        message: 'Usuario eliminado exitosamente',
+        usuario: {
+          id: usuario.id,
+          nombre_completo: usuario.nombre_completo,
+          email: usuario.email,
+          rol: usuario.rol
+        }
+      });
+    });
+  }
 }
 
 module.exports = new AuthController();

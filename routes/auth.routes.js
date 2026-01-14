@@ -21,4 +21,9 @@ router.post('/admin/reclutadores', verificarToken, verificarRol('administrador')
 router.delete('/admin/reclutadores/:reclutadorId', verificarToken, verificarRol('administrador'), authController.eliminarReclutador);
 router.post('/admin/reasignar-candidatos', verificarToken, verificarRol('administrador'), authController.reasignarCandidatos);
 
+// Rutas para gestión de usuarios desde rol selección
+router.get('/seleccion/usuarios', verificarToken, verificarRol('seleccion', 'administrador'), authController.obtenerUsuariosDesdeSeleccion);
+router.post('/seleccion/usuarios', verificarToken, verificarRol('seleccion', 'administrador'), authController.crearUsuarioDesdeSeleccion);
+router.delete('/seleccion/usuarios/:usuarioId', verificarToken, verificarRol('seleccion', 'administrador'), authController.eliminarUsuarioDesdeSeleccion);
+
 module.exports = router;

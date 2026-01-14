@@ -96,60 +96,94 @@ class SeleccionController {
   async asignarOleada(req, res) {
     try {
       const { candidatoId } = req.params;
-      const { oleadaId } = req.body;
-      
-      if (!oleadaId) {
-        return res.status(400).json({ error: 'ID de oleada es requerido' });
+      const { numeroOleada } = req.body;
+
+      if (!numeroOleada || numeroOleada < 1) {
+        return res.status(400).json({ error: 'Número de oleada es requerido y debe ser mayor a 0' });
       }
-      
-      // Verificar que la oleada existe y está activa
-      const verificarQuery = `
-        SELECT o.* FROM hyd_oleadas o WHERE o.id = ? AND o.activa = TRUE
+
+      // Primero obtener los datos del candidato (cliente y cargo)
+      const getCandidatoQuery = `
+        SELECT id, cliente, cargo FROM hyd_candidatos WHERE id = ?
       `;
-      
-      global.db.query(verificarQuery, [oleadaId], (err, oleadaResults) => {
+
+      global.db.query(getCandidatoQuery, [candidatoId], (err, candidatoResults) => {
         if (err) {
-          console.error('Error verificando oleada:', err);
+          console.error('Error obteniendo candidato:', err);
           return res.status(500).json({ error: 'Error de base de datos' });
         }
-        
-        if (oleadaResults.length === 0) {
-          return res.status(404).json({ error: 'Oleada no encontrada o inactiva' });
+
+        if (candidatoResults.length === 0) {
+          return res.status(404).json({ error: 'Candidato no encontrado' });
         }
-        
-        const oleada = oleadaResults[0];
-        
-        // Los psicólogos pueden asignar cualquier oleada activa a cualquier candidato
-        
-        // Por ahora, permitir asignación a cualquier oleada activa
-        // La restricción de oleadas pasadas se manejará mediante la administración del campo 'activa'
-        
-        // Asignar oleada al candidato
-        const updateQuery = `
-          UPDATE hyd_candidatos 
-          SET oleada_seleccion_id = ?, updated_at = NOW()
-          WHERE id = ?
+
+        const candidato = candidatoResults[0];
+        const operacion = candidato.cliente;
+        const campana = candidato.cargo;
+
+        // Buscar si existe la oleada para esta operación/campaña/número
+        const buscarOleadaQuery = `
+          SELECT * FROM hyd_oleadas
+          WHERE numero_oleada = ? AND operacion = ? AND campana = ? AND activa = TRUE
         `;
-        
-        global.db.query(updateQuery, [oleadaId, candidatoId], (err, results) => {
+
+        global.db.query(buscarOleadaQuery, [numeroOleada, operacion, campana], (err, oleadaResults) => {
           if (err) {
-            console.error('Error asignando oleada:', err);
+            console.error('Error buscando oleada:', err);
             return res.status(500).json({ error: 'Error de base de datos' });
           }
-          
-          if (results.affectedRows === 0) {
-            return res.status(404).json({ error: 'Candidato no encontrado' });
-          }
-          
-          res.json({ 
-            message: 'Candidato asignado a oleada correctamente',
-            oleada: {
+
+          const asignarOleadaACandidato = (oleadaId, oleadaInfo) => {
+            const updateQuery = `
+              UPDATE hyd_candidatos
+              SET oleada_seleccion_id = ?, updated_at = NOW()
+              WHERE id = ?
+            `;
+
+            global.db.query(updateQuery, [oleadaId, candidatoId], (err, results) => {
+              if (err) {
+                console.error('Error asignando oleada:', err);
+                return res.status(500).json({ error: 'Error de base de datos' });
+              }
+
+              res.json({
+                message: 'Candidato asignado a oleada correctamente',
+                oleada: oleadaInfo
+              });
+            });
+          };
+
+          if (oleadaResults.length > 0) {
+            // La oleada existe, asignarla
+            const oleada = oleadaResults[0];
+            asignarOleadaACandidato(oleada.id, {
               id: oleada.id,
               numero: oleada.numero_oleada,
               operacion: oleada.operacion,
               campana: oleada.campana
-            }
-          });
+            });
+          } else {
+            // La oleada no existe, crearla
+            const crearOleadaQuery = `
+              INSERT INTO hyd_oleadas (numero_oleada, operacion, campana, descripcion, activa)
+              VALUES (?, ?, ?, ?, TRUE)
+            `;
+            const descripcion = `Oleada ${numeroOleada} - ${operacion} - ${campana}`;
+
+            global.db.query(crearOleadaQuery, [numeroOleada, operacion, campana, descripcion], (err, insertResult) => {
+              if (err) {
+                console.error('Error creando oleada:', err);
+                return res.status(500).json({ error: 'Error al crear la oleada' });
+              }
+
+              asignarOleadaACandidato(insertResult.insertId, {
+                id: insertResult.insertId,
+                numero: numeroOleada,
+                operacion: operacion,
+                campana: campana
+              });
+            });
+          }
         });
       });
     } catch (error) {
