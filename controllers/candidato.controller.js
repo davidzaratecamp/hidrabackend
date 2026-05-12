@@ -374,36 +374,51 @@ class CandidatoController {
   async reenviarEmail(req, res) {
     try {
       const { candidatoId } = req.params;
+      const rol = req.usuario.rol;
       const reclutadorId = req.usuario.id;
-      
-      // Solo permitir reenvío de emails de candidatos del reclutador actual
-      const query = 'SELECT * FROM hyd_candidatos WHERE id = ? AND reclutador_id = ?';
-      
-      global.db.query(query, [candidatoId, reclutadorId], async (err, results) => {
+
+      // Admins y seleccion pueden reenviar a cualquier candidato; reclutadores solo a los suyos
+      let selectQuery, selectParams;
+      if (rol === 'administrador' || rol === 'seleccion') {
+        selectQuery = 'SELECT * FROM hyd_candidatos WHERE id = ?';
+        selectParams = [candidatoId];
+      } else {
+        selectQuery = 'SELECT * FROM hyd_candidatos WHERE id = ? AND reclutador_id = ?';
+        selectParams = [candidatoId, reclutadorId];
+      }
+
+      global.db.query(selectQuery, selectParams, async (err, results) => {
         if (err) {
           return res.status(500).json({ error: 'Error de base de datos' });
         }
-        
+
         if (results.length === 0) {
           return res.status(404).json({ error: 'Candidato no encontrado o no tienes acceso' });
         }
-        
+
         const candidato = results[0];
-        
-        const updateQuery = `
-          UPDATE hyd_candidatos 
-          SET estado = 'formularios_enviados', updated_at = NOW()
-          WHERE id = ? AND reclutador_id = ?
-        `;
-        
-        global.db.query(updateQuery, [candidatoId, reclutadorId], async (updateErr) => {
+
+        if (!candidato.email_personal || candidato.email_personal.includes('@noviembrehidra.com')) {
+          return res.status(400).json({ error: 'El candidato no tiene un email válido registrado' });
+        }
+
+        let updateQuery, updateParams;
+        if (rol === 'administrador' || rol === 'seleccion') {
+          updateQuery = `UPDATE hyd_candidatos SET estado = 'formularios_enviados', updated_at = NOW() WHERE id = ?`;
+          updateParams = [candidatoId];
+        } else {
+          updateQuery = `UPDATE hyd_candidatos SET estado = 'formularios_enviados', updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
+          updateParams = [candidatoId, reclutadorId];
+        }
+
+        global.db.query(updateQuery, updateParams, async (updateErr) => {
           if (updateErr) {
             return res.status(500).json({ error: 'Error actualizando estado' });
           }
-          
+
           const emailResult = await emailService.enviarFormularios(candidato);
-          
-          res.json({ 
+
+          res.json({
             message: 'Email reenviado exitosamente',
             emailStatus: emailResult
           });

@@ -18,44 +18,20 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Configuración de conexión MySQL mejorada
-const dbConfig = {
+const pool = mysql.createPool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   port: process.env.DB_PORT,
-  charset: 'utf8mb4'
-};
+  charset: 'utf8mb4',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
 
-let db;
-
-function createConnection() {
-  db = mysql.createConnection(dbConfig);
-  
-  db.connect((err) => {
-    if (err) {
-      console.error('Error conectando a MySQL:', err);
-      setTimeout(createConnection, 2000);
-    } else {
-      console.log('Conectado a MySQL');
-    }
-  });
-
-  db.on('error', (err) => {
-    console.error('Error de MySQL:', err);
-    if (err.code === 'PROTOCOL_CONNECTION_LOST' || err.code === 'ECONNRESET') {
-      console.log('Reconectando a MySQL...');
-      createConnection();
-    } else {
-      throw err;
-    }
-  });
-
-  global.db = db;
-}
-
-createConnection();
+global.db = pool;
+console.log('Pool de MySQL configurado correctamente');
 
 app.use('/api/candidato', candidatoRoutes);
 app.use('/api/auth', authRoutes);
