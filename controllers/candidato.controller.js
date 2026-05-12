@@ -561,7 +561,8 @@ class CandidatoController {
         nombre_empresa, cargo_desempenado, salario_experiencia,
         fecha_inicio_experiencia, fecha_retiro_experiencia,
         tiempo_laborado_anos, tiempo_laborado_meses,
-        motivo_retiro, ha_trabajado_asiste
+        motivo_retiro, ha_trabajado_asiste,
+        experiencia_comercial_certificada, experiencia_comercial_no_certificada, primer_empleo_formal
       } = req.body;
 
       if (!nombre_empresa || !cargo_desempenado || !salario_experiencia ||
@@ -580,6 +581,8 @@ class CandidatoController {
               fecha_inicio_experiencia = ?, fecha_retiro_experiencia = ?,
               tiempo_laborado_anos = ?, tiempo_laborado_meses = ?,
               motivo_retiro = ?, ha_trabajado_asiste = ?,
+              experiencia_comercial_certificada = ?, experiencia_comercial_no_certificada = ?,
+              primer_empleo_formal = ?,
               formulario_experiencia_completado = TRUE,
               fecha_completado_experiencia = NOW(), updated_at = NOW()
           WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
@@ -588,7 +591,9 @@ class CandidatoController {
           nombre_empresa, cargo_desempenado, salario_experiencia,
           fecha_inicio_experiencia, fecha_retiro_experiencia,
           tiempo_laborado_anos, tiempo_laborado_meses,
-          motivo_retiro, ha_trabajado_asiste, token
+          motivo_retiro, ha_trabajado_asiste,
+          experiencia_comercial_certificada || null, experiencia_comercial_no_certificada || null,
+          primer_empleo_formal || null, token
         ], (err, results) => {
           if (err) return res.status(500).json({ error: 'Error de base de datos' });
           if (results.affectedRows === 0) return res.status(404).json({ error: 'Token inválido o expirado' });
