@@ -402,27 +402,29 @@ class CandidatoController {
           return res.status(400).json({ error: 'El candidato no tiene un email válido registrado' });
         }
 
+        // Solo avanzar a 'formularios_enviados' si el candidato aún está en 'contacto_exitoso'.
+        // Si ya está en un estado más avanzado, reenviar el email no debe retroceder su progreso.
         let updateQuery, updateParams;
-        if (rol === 'administrador' || rol === 'seleccion') {
-          updateQuery = `UPDATE hyd_candidatos SET estado = 'formularios_enviados', updated_at = NOW() WHERE id = ?`;
-          updateParams = [candidatoId];
-        } else {
-          updateQuery = `UPDATE hyd_candidatos SET estado = 'formularios_enviados', updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
-          updateParams = [candidatoId, reclutadorId];
-        }
-
-        global.db.query(updateQuery, updateParams, async (updateErr) => {
-          if (updateErr) {
-            return res.status(500).json({ error: 'Error actualizando estado' });
+        if (candidato.estado === 'contacto_exitoso') {
+          if (rol === 'administrador' || rol === 'seleccion') {
+            updateQuery = `UPDATE hyd_candidatos SET estado = 'formularios_enviados', updated_at = NOW() WHERE id = ?`;
+            updateParams = [candidatoId];
+          } else {
+            updateQuery = `UPDATE hyd_candidatos SET estado = 'formularios_enviados', updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
+            updateParams = [candidatoId, reclutadorId];
           }
 
-          const emailResult = await emailService.enviarFormularios(candidato);
-
-          res.json({
-            message: 'Email reenviado exitosamente',
-            emailStatus: emailResult
+          global.db.query(updateQuery, updateParams, async (updateErr) => {
+            if (updateErr) {
+              return res.status(500).json({ error: 'Error actualizando estado' });
+            }
+            const emailResult = await emailService.enviarFormularios(candidato);
+            res.json({ message: 'Email reenviado exitosamente', emailStatus: emailResult });
           });
-        });
+        } else {
+          const emailResult = await emailService.enviarFormularios(candidato);
+          res.json({ message: 'Email reenviado exitosamente', emailStatus: emailResult });
+        }
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
