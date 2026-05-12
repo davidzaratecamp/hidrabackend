@@ -648,11 +648,14 @@ class CandidatoController {
     try {
       const { token } = req.params;
       const { ciudad_consentimiento, dia_consentimiento, mes_consentimiento, ano_consentimiento } = req.body;
-      
+
       if (!ciudad_consentimiento || !dia_consentimiento || !mes_consentimiento || !ano_consentimiento) {
         return res.status(400).json({ error: 'Todos los campos son requeridos' });
       }
-      
+
+      this._verificarAccesoFormulario(token, (lockError) => {
+        if (lockError) return res.status(lockError.status).json({ error: lockError.error });
+
       const query = `
         UPDATE hyd_candidatos 
         SET 
@@ -669,22 +672,23 @@ class CandidatoController {
       `;
       
       global.db.query(query, [ciudad_consentimiento, dia_consentimiento, mes_consentimiento, ano_consentimiento, token], async (err, results) => {
-        if (err) {
-          return res.status(500).json({ error: 'Error de base de datos' });
-        }
-        
-        if (results.affectedRows === 0) {
-          return res.status(404).json({ error: 'Token inválido o expirado' });
-        }
-        
-        const candidatoQuery = 'SELECT * FROM hyd_candidatos WHERE token_acceso = ?';
-        global.db.query(candidatoQuery, [token], async (candidatoErr, candidatoResults) => {
-          if (!candidatoErr && candidatoResults.length > 0) {
-            await emailService.enviarNotificacionCompletado(candidatoResults[0]);
+          if (err) {
+            return res.status(500).json({ error: 'Error de base de datos' });
           }
+
+          if (results.affectedRows === 0) {
+            return res.status(404).json({ error: 'Token inválido o expirado' });
+          }
+
+          const candidatoQuery = 'SELECT * FROM hyd_candidatos WHERE token_acceso = ?';
+          global.db.query(candidatoQuery, [token], async (candidatoErr, candidatoResults) => {
+            if (!candidatoErr && candidatoResults.length > 0) {
+              await emailService.enviarNotificacionCompletado(candidatoResults[0]);
+            }
+          });
+
+          res.json({ message: 'Consentimiento registrado y proceso completado exitosamente' });
         });
-        
-        res.json({ message: 'Consentimiento registrado y proceso completado exitosamente' });
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -806,14 +810,19 @@ class CandidatoController {
         return res.status(400).json({ error: 'Estado inválido' });
       }
 
-      // Verificar que el candidato pertenece al reclutador
-      const checkOwnershipQuery = 'SELECT id FROM hyd_candidatos WHERE id = ? AND reclutador_id = ?';
-      
-      global.db.query(checkOwnershipQuery, [candidatoId, reclutadorId], (ownerErr, ownerResults) => {
+      // Admins y seleccion pueden editar cualquier candidato; reclutadores solo los suyos
+      const rol = req.usuario.rol;
+      const esAdmin = rol === 'administrador' || rol === 'seleccion';
+      const checkOwnershipQuery = esAdmin
+        ? 'SELECT id FROM hyd_candidatos WHERE id = ?'
+        : 'SELECT id FROM hyd_candidatos WHERE id = ? AND reclutador_id = ?';
+      const checkOwnershipParams = esAdmin ? [candidatoId] : [candidatoId, reclutadorId];
+
+      global.db.query(checkOwnershipQuery, checkOwnershipParams, (ownerErr, ownerResults) => {
         if (ownerErr) {
           return res.status(500).json({ error: 'Error verificando pertenencia' });
         }
-        
+
         if (ownerResults.length === 0) {
           return res.status(404).json({ error: 'Candidato no encontrado o no tienes acceso a este candidato' });
         }
@@ -847,43 +856,19 @@ class CandidatoController {
           let query, queryParams;
           
           if (estado !== undefined && estado !== null && estado !== '') {
-            // Si se proporciona estado, incluirlo en la actualización
-            query = `
-              UPDATE hyd_candidatos 
-              SET 
-                primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?,
-                nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?,
-                oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?,
-                observaciones_llamada = ?, observaciones_generales = ?, estado = ?, updated_at = NOW()
-              WHERE id = ? AND reclutador_id = ?
-            `;
-            
-            queryParams = [
-              primer_nombre, primer_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular,
-              nacionalidad, tipo_documento, numero_documento || null, cliente, cargo,
-              oleada || null, ciudad || null, fecha_citacion_entrevista || null,
-              fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null,
-              estado, candidatoId, reclutadorId
-            ];
+            query = esAdmin
+              ? `UPDATE hyd_candidatos SET primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, estado = ?, updated_at = NOW() WHERE id = ?`
+              : `UPDATE hyd_candidatos SET primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, estado = ?, updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
+            queryParams = esAdmin
+              ? [primer_nombre, primer_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, oleada || null, ciudad || null, fecha_citacion_entrevista || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, estado, candidatoId]
+              : [primer_nombre, primer_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, oleada || null, ciudad || null, fecha_citacion_entrevista || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, estado, candidatoId, reclutadorId];
           } else {
-            // Si no se proporciona estado, no actualizarlo (mantener el estado actual)
-            query = `
-              UPDATE hyd_candidatos 
-              SET 
-                primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?,
-                nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?,
-                oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?,
-                observaciones_llamada = ?, observaciones_generales = ?, updated_at = NOW()
-              WHERE id = ? AND reclutador_id = ?
-            `;
-            
-            queryParams = [
-              primer_nombre, primer_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular,
-              nacionalidad, tipo_documento, numero_documento || null, cliente, cargo,
-              oleada || null, ciudad || null, fecha_citacion_entrevista || null,
-              fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null,
-              candidatoId, reclutadorId
-            ];
+            query = esAdmin
+              ? `UPDATE hyd_candidatos SET primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, updated_at = NOW() WHERE id = ?`
+              : `UPDATE hyd_candidatos SET primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
+            queryParams = esAdmin
+              ? [primer_nombre, primer_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, oleada || null, ciudad || null, fecha_citacion_entrevista || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, candidatoId]
+              : [primer_nombre, primer_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, oleada || null, ciudad || null, fecha_citacion_entrevista || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, candidatoId, reclutadorId];
           }
 
           global.db.query(query, queryParams, (err, results) => {
@@ -959,13 +944,16 @@ class CandidatoController {
         });
       }
 
-      const query = `
-        UPDATE hyd_candidatos 
-        SET estado = ?, updated_at = NOW()
-        WHERE id = ? AND reclutador_id = ?
-      `;
+      const rolCambio = req.usuario.rol;
+      const esAdminCambio = rolCambio === 'administrador' || rolCambio === 'seleccion';
+      const query = esAdminCambio
+        ? `UPDATE hyd_candidatos SET estado = ?, updated_at = NOW() WHERE id = ?`
+        : `UPDATE hyd_candidatos SET estado = ?, updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
+      const queryParamsCambio = esAdminCambio
+        ? [estadoLimpio, candidatoId]
+        : [estadoLimpio, candidatoId, reclutadorId];
 
-      global.db.query(query, [estadoLimpio, candidatoId, reclutadorId], (err, results) => {
+      global.db.query(query, queryParamsCambio, (err, results) => {
         if (err) {
           console.error('Error cambiando estado:', err);
           return res.status(500).json({ error: 'Error cambiando estado del candidato' });
