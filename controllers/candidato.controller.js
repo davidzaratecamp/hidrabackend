@@ -404,27 +404,27 @@ class CandidatoController {
 
         // Solo avanzar a 'formularios_enviados' si el candidato aún está en 'contacto_exitoso'.
         // Si ya está en un estado más avanzado, reenviar el email no debe retroceder su progreso.
-        let updateQuery, updateParams;
-        if (candidato.estado === 'contacto_exitoso') {
-          if (rol === 'administrador' || rol === 'seleccion') {
-            updateQuery = `UPDATE hyd_candidatos SET estado = 'formularios_enviados', updated_at = NOW() WHERE id = ?`;
-            updateParams = [candidatoId];
-          } else {
-            updateQuery = `UPDATE hyd_candidatos SET estado = 'formularios_enviados', updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
-            updateParams = [candidatoId, reclutadorId];
-          }
+        const nuevoToken = uuidv4();
+        const nuevaFechaVencimiento = new Date();
+        nuevaFechaVencimiento.setDate(nuevaFechaVencimiento.getDate() + 30);
 
-          global.db.query(updateQuery, updateParams, async (updateErr) => {
-            if (updateErr) {
-              return res.status(500).json({ error: 'Error actualizando estado' });
-            }
-            const emailResult = await emailService.enviarFormularios(candidato);
-            res.json({ message: 'Email reenviado exitosamente', emailStatus: emailResult });
-          });
-        } else {
-          const emailResult = await emailService.enviarFormularios(candidato);
+        // Al reenviar: nuevo token (invalida el link anterior), desbloquea formularios,
+        // y solo avanza el estado si venía de contacto_exitoso.
+        const nuevoEstado = candidato.estado === 'contacto_exitoso' ? 'formularios_enviados' : candidato.estado;
+        const esAdmin = rol === 'administrador' || rol === 'seleccion';
+
+        const updateQuery = esAdmin
+          ? `UPDATE hyd_candidatos SET token_acceso = ?, fecha_vencimiento_token = ?, formulario_consentimiento_completado = FALSE, estado = ?, updated_at = NOW() WHERE id = ?`
+          : `UPDATE hyd_candidatos SET token_acceso = ?, fecha_vencimiento_token = ?, formulario_consentimiento_completado = FALSE, estado = ?, updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
+        const updateParams = esAdmin
+          ? [nuevoToken, nuevaFechaVencimiento, nuevoEstado, candidatoId]
+          : [nuevoToken, nuevaFechaVencimiento, nuevoEstado, candidatoId, reclutadorId];
+
+        global.db.query(updateQuery, updateParams, async (updateErr) => {
+          if (updateErr) return res.status(500).json({ error: 'Error actualizando estado' });
+          const emailResult = await emailService.enviarFormularios({ ...candidato, token_acceso: nuevoToken });
           res.json({ message: 'Email reenviado exitosamente', emailStatus: emailResult });
-        }
+        });
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -443,35 +443,41 @@ class CandidatoController {
     }
   }
 
+  _verificarAccesoFormulario(token, callback) {
+    const query = `SELECT formulario_consentimiento_completado FROM hyd_candidatos WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()`;
+    global.db.query(query, [token], (err, results) => {
+      if (err) return callback({ status: 500, error: 'Error de base de datos' });
+      if (results.length === 0) return callback({ status: 404, error: 'Token inválido o expirado' });
+      if (results[0].formulario_consentimiento_completado) {
+        return callback({ status: 403, error: 'Los formularios ya fueron completados. Si necesitas hacer cambios, solicita al reclutador que reenvíe el acceso.' });
+      }
+      callback(null);
+    });
+  }
+
   async actualizarHojaVida(req, res) {
     try {
       const { token } = req.params;
       const { estado_civil } = req.body;
-      
+
       if (!estado_civil) {
         return res.status(400).json({ error: 'Estado civil es requerido' });
       }
-      
-      const query = `
-        UPDATE hyd_candidatos 
-        SET 
-          estado_civil = ?,
-          formulario_hoja_vida_completado = TRUE,
-          fecha_completado_hoja_vida = NOW(),
-          updated_at = NOW()
-        WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
-      `;
-      
-      global.db.query(query, [estado_civil, token], (err, results) => {
-        if (err) {
-          return res.status(500).json({ error: 'Error de base de datos' });
-        }
-        
-        if (results.affectedRows === 0) {
-          return res.status(404).json({ error: 'Token inválido o expirado' });
-        }
-        
-        res.json({ message: 'Hoja de vida actualizada exitosamente' });
+
+      this._verificarAccesoFormulario(token, (lockError) => {
+        if (lockError) return res.status(lockError.status).json({ error: lockError.error });
+
+        const query = `
+          UPDATE hyd_candidatos
+          SET estado_civil = ?, formulario_hoja_vida_completado = TRUE,
+              fecha_completado_hoja_vida = NOW(), updated_at = NOW()
+          WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
+        `;
+        global.db.query(query, [estado_civil, token], (err, results) => {
+          if (err) return res.status(500).json({ error: 'Error de base de datos' });
+          if (results.affectedRows === 0) return res.status(404).json({ error: 'Token inválido o expirado' });
+          res.json({ message: 'Hoja de vida actualizada exitosamente' });
+        });
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -485,38 +491,33 @@ class CandidatoController {
         segundo_apellido, segundo_nombre, genero, fecha_nacimiento,
         grupo_sanguineo, eps, afp, nombre_emergencia, numero_emergencia, parentesco_emergencia
       } = req.body;
-      
-      if (!genero || !fecha_nacimiento || !grupo_sanguineo || !eps || !afp || 
+
+      if (!genero || !fecha_nacimiento || !grupo_sanguineo || !eps || !afp ||
           !nombre_emergencia || !numero_emergencia || !parentesco_emergencia) {
         return res.status(400).json({ error: 'Todos los campos requeridos deben completarse' });
       }
-      
-      const query = `
-        UPDATE hyd_candidatos 
-        SET 
-          segundo_apellido = ?, segundo_nombre = ?, genero = ?, fecha_nacimiento = ?,
-          grupo_sanguineo = ?, eps = ?, afp = ?, nombre_emergencia = ?,
-          numero_emergencia = ?, parentesco_emergencia = ?,
-          formulario_datos_basicos_completado = TRUE,
-          fecha_completado_datos_basicos = NOW(),
-          updated_at = NOW()
-        WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
-      `;
-      
-      global.db.query(query, [
-        segundo_apellido, segundo_nombre, genero, fecha_nacimiento,
-        grupo_sanguineo, eps, afp, nombre_emergencia, numero_emergencia, parentesco_emergencia,
-        token
-      ], (err, results) => {
-        if (err) {
-          return res.status(500).json({ error: 'Error de base de datos' });
-        }
-        
-        if (results.affectedRows === 0) {
-          return res.status(404).json({ error: 'Token inválido o expirado' });
-        }
-        
-        res.json({ message: 'Datos básicos actualizados exitosamente' });
+
+      this._verificarAccesoFormulario(token, (lockError) => {
+        if (lockError) return res.status(lockError.status).json({ error: lockError.error });
+
+        const query = `
+          UPDATE hyd_candidatos
+          SET segundo_apellido = ?, segundo_nombre = ?, genero = ?, fecha_nacimiento = ?,
+              grupo_sanguineo = ?, eps = ?, afp = ?, nombre_emergencia = ?,
+              numero_emergencia = ?, parentesco_emergencia = ?,
+              formulario_datos_basicos_completado = TRUE,
+              fecha_completado_datos_basicos = NOW(), updated_at = NOW()
+          WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
+        `;
+        global.db.query(query, [
+          segundo_apellido, segundo_nombre, genero, fecha_nacimiento,
+          grupo_sanguineo, eps, afp, nombre_emergencia, numero_emergencia, parentesco_emergencia,
+          token
+        ], (err, results) => {
+          if (err) return res.status(500).json({ error: 'Error de base de datos' });
+          if (results.affectedRows === 0) return res.status(404).json({ error: 'Token inválido o expirado' });
+          res.json({ message: 'Datos básicos actualizados exitosamente' });
+        });
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -527,31 +528,26 @@ class CandidatoController {
     try {
       const { token } = req.params;
       const { nivel_estudios, titulo_obtenido, nombre_institucion, ano_finalizacion } = req.body;
-      
+
       if (!nivel_estudios || !titulo_obtenido || !nombre_institucion || !ano_finalizacion) {
         return res.status(400).json({ error: 'Todos los campos son requeridos' });
       }
-      
-      const query = `
-        UPDATE hyd_candidatos 
-        SET 
-          nivel_estudios = ?, titulo_obtenido = ?, nombre_institucion = ?, ano_finalizacion = ?,
-          formulario_estudios_completado = TRUE,
-          fecha_completado_estudios = NOW(),
-          updated_at = NOW()
-        WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
-      `;
-      
-      global.db.query(query, [nivel_estudios, titulo_obtenido, nombre_institucion, ano_finalizacion, token], (err, results) => {
-        if (err) {
-          return res.status(500).json({ error: 'Error de base de datos' });
-        }
-        
-        if (results.affectedRows === 0) {
-          return res.status(404).json({ error: 'Token inválido o expirado' });
-        }
-        
-        res.json({ message: 'Estudios actualizados exitosamente' });
+
+      this._verificarAccesoFormulario(token, (lockError) => {
+        if (lockError) return res.status(lockError.status).json({ error: lockError.error });
+
+        const query = `
+          UPDATE hyd_candidatos
+          SET nivel_estudios = ?, titulo_obtenido = ?, nombre_institucion = ?, ano_finalizacion = ?,
+              formulario_estudios_completado = TRUE,
+              fecha_completado_estudios = NOW(), updated_at = NOW()
+          WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
+        `;
+        global.db.query(query, [nivel_estudios, titulo_obtenido, nombre_institucion, ano_finalizacion, token], (err, results) => {
+          if (err) return res.status(500).json({ error: 'Error de base de datos' });
+          if (results.affectedRows === 0) return res.status(404).json({ error: 'Token inválido o expirado' });
+          res.json({ message: 'Estudios actualizados exitosamente' });
+        });
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -567,42 +563,37 @@ class CandidatoController {
         tiempo_laborado_anos, tiempo_laborado_meses,
         motivo_retiro, ha_trabajado_asiste
       } = req.body;
-      
-      if (!nombre_empresa || !cargo_desempenado || !salario_experiencia || 
+
+      if (!nombre_empresa || !cargo_desempenado || !salario_experiencia ||
           !fecha_inicio_experiencia || !fecha_retiro_experiencia ||
           tiempo_laborado_anos === undefined || tiempo_laborado_meses === undefined ||
           !motivo_retiro || !ha_trabajado_asiste) {
         return res.status(400).json({ error: 'Todos los campos son requeridos' });
       }
-      
-      const query = `
-        UPDATE hyd_candidatos 
-        SET 
-          nombre_empresa = ?, cargo_desempenado = ?, salario_experiencia = ?,
-          fecha_inicio_experiencia = ?, fecha_retiro_experiencia = ?,
-          tiempo_laborado_anos = ?, tiempo_laborado_meses = ?,
-          motivo_retiro = ?, ha_trabajado_asiste = ?,
-          formulario_experiencia_completado = TRUE,
-          fecha_completado_experiencia = NOW(),
-          updated_at = NOW()
-        WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
-      `;
-      
-      global.db.query(query, [
-        nombre_empresa, cargo_desempenado, salario_experiencia,
-        fecha_inicio_experiencia, fecha_retiro_experiencia,
-        tiempo_laborado_anos, tiempo_laborado_meses,
-        motivo_retiro, ha_trabajado_asiste, token
-      ], (err, results) => {
-        if (err) {
-          return res.status(500).json({ error: 'Error de base de datos' });
-        }
-        
-        if (results.affectedRows === 0) {
-          return res.status(404).json({ error: 'Token inválido o expirado' });
-        }
-        
-        res.json({ message: 'Experiencia actualizada exitosamente' });
+
+      this._verificarAccesoFormulario(token, (lockError) => {
+        if (lockError) return res.status(lockError.status).json({ error: lockError.error });
+
+        const query = `
+          UPDATE hyd_candidatos
+          SET nombre_empresa = ?, cargo_desempenado = ?, salario_experiencia = ?,
+              fecha_inicio_experiencia = ?, fecha_retiro_experiencia = ?,
+              tiempo_laborado_anos = ?, tiempo_laborado_meses = ?,
+              motivo_retiro = ?, ha_trabajado_asiste = ?,
+              formulario_experiencia_completado = TRUE,
+              fecha_completado_experiencia = NOW(), updated_at = NOW()
+          WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
+        `;
+        global.db.query(query, [
+          nombre_empresa, cargo_desempenado, salario_experiencia,
+          fecha_inicio_experiencia, fecha_retiro_experiencia,
+          tiempo_laborado_anos, tiempo_laborado_meses,
+          motivo_retiro, ha_trabajado_asiste, token
+        ], (err, results) => {
+          if (err) return res.status(500).json({ error: 'Error de base de datos' });
+          if (results.affectedRows === 0) return res.status(404).json({ error: 'Token inválido o expirado' });
+          res.json({ message: 'Experiencia actualizada exitosamente' });
+        });
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -616,37 +607,32 @@ class CandidatoController {
         fortalezas, aspectos_mejorar, competencias_laborales,
         conocimiento_excel, conocimiento_powerpoint, conocimiento_word, autoevaluacion
       } = req.body;
-      
+
       if (!fortalezas || !aspectos_mejorar || !competencias_laborales ||
           !conocimiento_excel || !conocimiento_powerpoint || !conocimiento_word || !autoevaluacion) {
         return res.status(400).json({ error: 'Todos los campos son requeridos' });
       }
-      
-      const query = `
-        UPDATE hyd_candidatos 
-        SET 
-          fortalezas = ?, aspectos_mejorar = ?, competencias_laborales = ?,
-          conocimiento_excel = ?, conocimiento_powerpoint = ?, conocimiento_word = ?, autoevaluacion = ?,
-          formulario_personal_completado = TRUE,
-          fecha_completado_personal = NOW(),
-          updated_at = NOW()
-        WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
-      `;
-      
-      global.db.query(query, [
-        fortalezas, aspectos_mejorar, competencias_laborales,
-        conocimiento_excel, conocimiento_powerpoint, conocimiento_word, autoevaluacion,
-        token
-      ], (err, results) => {
-        if (err) {
-          return res.status(500).json({ error: 'Error de base de datos' });
-        }
-        
-        if (results.affectedRows === 0) {
-          return res.status(404).json({ error: 'Token inválido o expirado' });
-        }
-        
-        res.json({ message: 'Información personal actualizada exitosamente' });
+
+      this._verificarAccesoFormulario(token, (lockError) => {
+        if (lockError) return res.status(lockError.status).json({ error: lockError.error });
+
+        const query = `
+          UPDATE hyd_candidatos
+          SET fortalezas = ?, aspectos_mejorar = ?, competencias_laborales = ?,
+              conocimiento_excel = ?, conocimiento_powerpoint = ?, conocimiento_word = ?, autoevaluacion = ?,
+              formulario_personal_completado = TRUE,
+              fecha_completado_personal = NOW(), updated_at = NOW()
+          WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
+        `;
+        global.db.query(query, [
+          fortalezas, aspectos_mejorar, competencias_laborales,
+          conocimiento_excel, conocimiento_powerpoint, conocimiento_word, autoevaluacion,
+          token
+        ], (err, results) => {
+          if (err) return res.status(500).json({ error: 'Error de base de datos' });
+          if (results.affectedRows === 0) return res.status(404).json({ error: 'Token inválido o expirado' });
+          res.json({ message: 'Información personal actualizada exitosamente' });
+        });
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
