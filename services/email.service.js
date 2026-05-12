@@ -121,7 +121,72 @@ class EmailService {
 
   async enviarNotificacionCompletado(candidato) {
     console.log(`📧 Notificación: ${candidato.primer_nombre} ${candidato.primer_apellido} completó todos los formularios`);
-    return { success: true };
+
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+      return { success: true, message: 'Email simulado (configuración pendiente)' };
+    }
+
+    try {
+      const reclutadorResults = await new Promise((resolve, reject) => {
+        global.db.query(
+          'SELECT email, nombre_completo FROM hyd_usuarios WHERE id = ?',
+          [candidato.reclutador_id],
+          (err, results) => { if (err) reject(err); else resolve(results); }
+        );
+      });
+
+      if (!reclutadorResults.length) return { success: false, message: 'Reclutador no encontrado' };
+
+      const reclutador = reclutadorResults[0];
+      const fechaHoy = new Date().toLocaleDateString('es-CO', { dateStyle: 'long' });
+
+      const htmlTemplate = `
+      <!DOCTYPE html>
+      <html>
+      <head><meta charset="utf-8"><title>Formularios Completados - Hydra</title>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: #166534; color: white; padding: 20px; text-align: center; }
+        .content { padding: 20px; background: #f8f9fa; }
+        .card { background: white; border-radius: 8px; padding: 16px; margin: 16px 0; border-left: 4px solid #16a34a; }
+        .footer { text-align: center; padding: 20px; font-size: 12px; color: #666; }
+      </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header"><h1>✅ ASISTE ING</h1><p>Formularios Completados</p></div>
+          <div class="content">
+            <p>Hola <strong>${reclutador.nombre_completo}</strong>,</p>
+            <p>El candidato asignado a tu gestión ha completado todos los formularios del proceso de selección.</p>
+            <div class="card">
+              <p><strong>Candidato:</strong> ${candidato.primer_nombre} ${candidato.primer_apellido}</p>
+              <p><strong>Documento:</strong> ${candidato.tipo_documento || ''} ${candidato.numero_documento || ''}</p>
+              <p><strong>Cargo:</strong> ${candidato.cargo}</p>
+              <p><strong>Cliente:</strong> ${candidato.cliente}</p>
+              <p><strong>Fecha de completado:</strong> ${fechaHoy}</p>
+            </div>
+            <p>Ingresa a la plataforma Hydra para revisar el perfil completo y continuar con el proceso.</p>
+            <p><strong>Equipo ASISTE ING</strong></p>
+          </div>
+          <div class="footer"><p>Este es un mensaje automático, por favor no responder a este email.</p></div>
+        </div>
+      </body>
+      </html>`;
+
+      const info = await this.transporter.sendMail({
+        from: process.env.EMAIL_FROM,
+        to: reclutador.email,
+        subject: `✅ Formularios completados: ${candidato.primer_nombre} ${candidato.primer_apellido} | ${candidato.cargo}`,
+        html: htmlTemplate
+      });
+
+      console.log('Notificación enviada al reclutador:', info.messageId);
+      return { success: true, messageId: info.messageId };
+    } catch (error) {
+      console.error('Error enviando notificación al reclutador:', error);
+      return { success: false, message: error.message };
+    }
   }
 }
 

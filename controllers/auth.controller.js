@@ -479,7 +479,7 @@ class AuthController {
         const checkActiveQuery = 'SELECT activo FROM hyd_usuarios WHERE id = ?';
         
         global.db.query(checkActiveQuery, [reclutadorDestinoId], (activeErr, activeResults) => {
-          if (activeErr || !activeResults[0].activo) {
+          if (activeErr || activeResults.length === 0 || !activeResults[0].activo) {
             return res.status(400).json({ error: 'El reclutador destino debe estar activo' });
           }
 
