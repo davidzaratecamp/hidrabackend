@@ -21,11 +21,11 @@ router.put('/editar/:candidatoId', verificarToken, verificarPermiso('editar_cand
 router.put('/cambiar-estado/:candidatoId', verificarToken, verificarPermiso('editar_candidatos'), candidatoController.cambiarEstado);
 router.put('/fecha-entrevista/:candidatoId', verificarToken, verificarPermiso('agendar_entrevistas'), candidatoController.actualizarFechaEntrevista);
 
-router.put('/hoja-vida/:token', candidatoController.actualizarHojaVida);
-router.put('/datos-basicos/:token', candidatoController.actualizarDatosBasicos);
-router.put('/estudios/:token', candidatoController.actualizarEstudios);
-router.put('/experiencia/:token', candidatoController.actualizarExperiencia);
-router.put('/personal/:token', candidatoController.actualizarPersonal);
-router.put('/consentimiento/:token', candidatoController.actualizarConsentimiento);
+router.put('/hoja-vida/:token', candidatoController.actualizarHojaVida.bind(candidatoController));
+router.put('/datos-basicos/:token', candidatoController.actualizarDatosBasicos.bind(candidatoController));
+router.put('/estudios/:token', candidatoController.actualizarEstudios.bind(candidatoController));
+router.put('/experiencia/:token', candidatoController.actualizarExperiencia.bind(candidatoController));
+router.put('/personal/:token', candidatoController.actualizarPersonal.bind(candidatoController));
+router.put('/consentimiento/:token', candidatoController.actualizarConsentimiento.bind(candidatoController));
 
 module.exports = router;

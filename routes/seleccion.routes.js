@@ -25,6 +25,7 @@ const verificarRolLectura = (req, res, next) => {
 
 // Rutas principales (lectura: todos los roles)
 router.get('/candidatos-citados', verificarRolLectura, seleccionController.getCandidatosCitados);
+router.get('/candidatos-total', verificarRolLectura, seleccionController.getCandidatosTotal);
 router.get('/candidatos-aprobados', verificarRolLectura, seleccionController.getCandidatosAprobados);
 router.get('/candidatos-rechazados', verificarRolLectura, seleccionController.getCandidatosRechazados);
 router.get('/oleadas', verificarRolLectura, seleccionController.getOleadas);

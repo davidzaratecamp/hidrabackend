@@ -1,5 +1,17 @@
 const { v4: uuidv4 } = require('uuid');
 
+// Helper para poder usar await con global.db.query (callback-style), usado solo por
+// getCandidatosTotal (2026-08-19) - el resto del archivo se deja en su estilo callback
+// original, sin tocar.
+function queryAsync(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    global.db.query(sql, params, (err, results) => {
+      if (err) reject(err);
+      else resolve(results);
+    });
+  });
+}
+
 class SeleccionController {
   
   // Obtener candidatos en proceso de selección
@@ -833,6 +845,110 @@ class SeleccionController {
       });
     } catch (error) {
       console.error('Error en getCandidatosRechazados:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  // Versión paginada de getCandidatosCitados, dedicada a "Candidatos Total" (vista de solo
+  // lectura del reclutador, CandidatosTotal.jsx). Se agregó como endpoint nuevo (2026-08-19)
+  // en vez de modificar getCandidatosCitados a propósito: ese otro lo usa también
+  // CandidatosSeleccion.jsx, la pantalla de trabajo diario del equipo de Selección
+  // (evaluar/gestionar citados, filtrando client-side sobre la lista completa) - paginar ahí
+  // habría arriesgado romper ese flujo. Confirmado el alcance con el usuario.
+  async getCandidatosTotal(req, res) {
+    try {
+      const limit = 20;
+      const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+      const offset = (page - 1) * limit;
+
+      // Búsqueda/filtros server-side (mismo motivo que en candidato.controller.js:
+      // getCandidatosPorEstado - con paginado, filtrar en el frontend solo vería la página
+      // cargada, no todos los citados).
+      const search = (req.query.search || '').trim();
+      const searchParam = search ? `%${search.replace(/[\\%_]/g, '\\$&')}%` : null;
+
+      const condiciones = [];
+      const params = [];
+
+      if (search) {
+        condiciones.push('(c.primer_nombre LIKE ? OR c.primer_apellido LIKE ? OR c.email_personal LIKE ? OR c.numero_celular LIKE ?)');
+        params.push(searchParam, searchParam, searchParam, searchParam);
+      }
+      if (req.query.operacion) {
+        condiciones.push('c.cliente = ?');
+        params.push(req.query.operacion);
+      }
+      if (req.query.asistencia) {
+        condiciones.push('c.asistio_citacion = ?');
+        params.push(req.query.asistencia);
+      }
+      if (req.query.estado) {
+        condiciones.push('c.estado = ?');
+        params.push(req.query.estado);
+      }
+      if (req.query.reclutador) {
+        condiciones.push('u.nombre_completo = ?');
+        params.push(req.query.reclutador);
+      }
+
+      const whereExtra = condiciones.length ? ` AND ${condiciones.join(' AND ')}` : '';
+      const baseFrom = `
+        FROM hyd_candidatos c
+        LEFT JOIN hyd_usuarios u ON c.reclutador_id = u.id
+        LEFT JOIN hyd_usuarios up ON c.psicologo_decision_id = up.id
+        LEFT JOIN hyd_oleadas o ON c.oleada_seleccion_id = o.id
+        WHERE c.fecha_citacion_entrevista IS NOT NULL${whereExtra}
+      `;
+
+      // Las opciones de los dropdowns de "Operación"/"Reclutador" se calculan sobre TODOS los
+      // citados (sin aplicar los demás filtros activos) - mismo comportamiento que tenía el
+      // cálculo client-side original (getOperacionesUnicas/getReclutadoresUnicos leían del
+      // array completo `candidatos`, no del filtrado).
+      const [countResults, results, operaciones, reclutadores] = await Promise.all([
+        queryAsync(`SELECT COUNT(*) as total ${baseFrom}`, params),
+        queryAsync(
+          `SELECT
+            c.id, c.primer_nombre, c.primer_apellido, c.email_personal, c.numero_celular,
+            c.cliente, c.cargo, c.fecha_citacion_entrevista, c.asistio_citacion, c.estado,
+            c.evaluacion_total, c.aprobacion_final, c.created_at,
+            u.nombre_completo as nombre_reclutador,
+            up.nombre_completo as nombre_psicologo_decision,
+            o.numero_oleada, o.descripcion as descripcion_oleada
+          ${baseFrom}
+          ORDER BY
+            CASE WHEN c.evaluacion_total IS NOT NULL AND c.aprobacion_final IS NULL THEN 1 ELSE 2 END,
+            c.fecha_citacion_entrevista ASC, c.created_at ASC, c.id ASC
+          LIMIT ? OFFSET ?`,
+          [...params, limit, offset]
+        ),
+        queryAsync(
+          `SELECT DISTINCT cliente FROM hyd_candidatos
+           WHERE fecha_citacion_entrevista IS NOT NULL AND cliente IS NOT NULL
+           ORDER BY cliente`
+        ),
+        queryAsync(
+          `SELECT DISTINCT u.nombre_completo FROM hyd_candidatos c
+           JOIN hyd_usuarios u ON c.reclutador_id = u.id
+           WHERE c.fecha_citacion_entrevista IS NOT NULL
+           ORDER BY u.nombre_completo`
+        )
+      ]);
+
+      res.json({
+        candidatos: results,
+        pagination: {
+          page,
+          limit,
+          total: countResults[0].total,
+          totalPages: Math.max(Math.ceil(countResults[0].total / limit), 1)
+        },
+        filtrosDisponibles: {
+          operaciones: operaciones.map((r) => r.cliente),
+          reclutadores: reclutadores.map((r) => r.nombre_completo)
+        }
+      });
+    } catch (error) {
+      console.error('Error en getCandidatosTotal:', error);
       res.status(500).json({ error: error.message });
     }
   }

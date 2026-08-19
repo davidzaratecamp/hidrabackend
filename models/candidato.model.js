@@ -1,3 +1,23 @@
+// Catálogo de cargos de BASE RECLUTAMIENTO (2).xlsx (2026-08-14).
+// Se agrega a TODOS los catálogos de cargo por cliente (staff, claro, obamacare, majority,
+// campañas nuevas), de forma aditiva, para que cargos como "Agente"/"Agente Plus" estén
+// disponibles sin importar el cliente/campaña seleccionado.
+const CARGOS_BASE_RECLUTAMIENTO = [
+  'Agente', 'Agente Plus', 'Analista De Calidad', 'Analista De Reclutamiento',
+  'Analista De Seleccion', 'Analista De Usuarios', 'Analista PQR', 'BackOffice',
+  'Community Manager', 'Coordinador', 'Coordinador BackOffice',
+  'Coordinador De Reclutamiento Y Selección', 'Coordinadora De Calidad',
+  'Director de formación', 'Formador', 'Formador Senior', 'Jefe de operacion',
+  'Jefe De Reclutamiento Y Selección', 'Legalizador', 'Psicologo De Seleccion',
+  'Team Leader', 'Team Lider BackOffice', 'Team Lider Operaciones'
+];
+
+// Une una lista de cargos propia de un cliente con el catálogo de BASE RECLUTAMIENTO,
+// sin duplicar valores ya presentes.
+function conCargosBaseReclutamiento(cargosPropios) {
+  return [...cargosPropios, ...CARGOS_BASE_RECLUTAMIENTO.filter(c => !cargosPropios.includes(c))];
+}
+
 class CandidatoModel {
   // Estados válidos del candidato (sincronizado con producción - Nov 2024)
   // IMPORTANTE: Este array debe coincidir exactamente con el ENUM de la base de datos
@@ -115,22 +135,29 @@ class CandidatoModel {
 
   static getOpcionesCatalogo() {
     return {
-      nacionalidades: [
-        { value: 'Colombiano', label: 'Colombiano' },
-        { value: 'Venezolano', label: 'Venezolano' }
+      // Actualizado (2026-08-18, corrección del usuario): se eliminó el campo Nacionalidad
+      // del formulario. Tipo de Documento pasa a ser la única fuente de esa información —
+      // solo 2 opciones (CC, PPT); `nacionalidad` se deriva de esto en el backend
+      // (ver crearCandidato/editarCandidato en candidato.controller.js).
+      tipos_documento: [
+        { value: 'CC', label: 'CC' },
+        { value: 'PPT', label: 'PPT' }
       ],
-      tipos_documento_extranjero: [
-        { value: 'Pasaporte', label: 'Pasaporte' },
-        { value: 'CE', label: 'CE (Cédula de Extranjería)' },
-        { value: 'DNI', label: 'DNI' },
-        { value: 'Otro', label: 'Otro' }
-      ],
+      // Nota: catálogo actualizado con las campañas de BASE RECLUTAMIENTO (2).xlsx (2026-08-14).
+      // Se agregan de forma aditiva (Hogar, Móvil, TyT, Pymes, ACA, Customer) sin quitar los
+      // valores existentes, para no romper candidatos ya creados con los clientes anteriores.
       clientes: [
         { value: 'Staff Operacional', label: 'Staff Operacional' },
         { value: 'Staff Administrativo', label: 'Staff Administrativo' },
         { value: 'Claro', label: 'Claro' },
         { value: 'Obamacare', label: 'Obamacare' },
-        { value: 'Majority', label: 'Majority' }
+        { value: 'Majority', label: 'Majority' },
+        { value: 'Hogar', label: 'Hogar' },
+        { value: 'Móvil', label: 'Móvil' },
+        { value: 'TyT', label: 'TyT' },
+        { value: 'Pymes', label: 'Pymes' },
+        { value: 'ACA', label: 'ACA' },
+        { value: 'Customer', label: 'Customer' }
       ],
       ciudades: [
         { value: 'Bogotá', label: 'Bogotá' },
@@ -157,7 +184,7 @@ class CandidatoModel {
         { value: 'Reagendar', label: 'Reagendar' },
         { value: 'No apto', label: 'No apto' }
       ],
-      cargos_staff: [
+      cargos_staff: conCargosBaseReclutamiento([
         'Analista Administrativa Y Contable', 'Analista De Calidad', 'Analista De Calidad Pe',
         'Analista De Contratacion', 'Analista De Reclutamiento', 'Analista De Seleccion',
         'Analista De Usuarios', 'Analista PQR', 'Auditor/Gestor Calidad Comercial',
@@ -175,16 +202,20 @@ class CandidatoModel {
         'Jefe de workforce', 'Jefe Financiero', 'Jefe Juridica', 'Legalizador',
         'Maestro De Obra', 'Profesional De SST', 'Psicologo De Seleccion',
         'Recepcionista', 'Subgerente De Operaciones', 'Tecnico De Soporte', 'Staff'
-      ],
-      cargos_claro: [
+      ]),
+      cargos_claro: conCargosBaseReclutamiento([
         'Agente Call Center', 'Agente Call Center Plus'
-      ],
-      cargos_obamacare: [
+      ]),
+      cargos_obamacare: conCargosBaseReclutamiento([
         'Customer Service', 'Agente Call Center'
-      ],
-      cargos_majority: [
+      ]),
+      cargos_majority: conCargosBaseReclutamiento([
         'Agente Call Center'
-      ],
+      ]),
+      // Cargos para las campañas nuevas (Hogar, Móvil, TyT, Pymes, ACA, Customer) —
+      // BASE RECLUTAMIENTO (2).xlsx no diferencia cargos por campaña, así que las 6
+      // comparten el catálogo completo (2026-08-14).
+      cargos_campanas: [...CARGOS_BASE_RECLUTAMIENTO],
       estados_civiles: [
         { value: 'soltero', label: 'Soltero(a)' },
         { value: 'casado', label: 'Casado(a)' },
@@ -208,15 +239,15 @@ class CandidatoModel {
         'Protección', 'Porvenir', 'Colfondos', 'Old Mutual', 
         'Skandia', 'Colpensiones', 'No tengo AFP'
       ],
+      // Los 4 niveles fijos del bloque "INFORMACIÓN ACADEMICA" del Excel oficial
+      // (FORMATO HOJA DE VIDA, hoja "HOJA DE VIDA E INFORME DE SELEC") - reemplaza al
+      // catálogo abierto anterior (2026-08-18, migración 005), que solo usaba
+      // Estudios.jsx.
       niveles_estudios: [
-        { value: 'primaria', label: 'Primaria' },
         { value: 'bachillerato', label: 'Bachillerato' },
-        { value: 'tecnico', label: 'Técnico' },
-        { value: 'tecnologo', label: 'Tecnólogo' },
-        { value: 'universitario', label: 'Universitario' },
-        { value: 'especialista', label: 'Especialista' },
-        { value: 'magister', label: 'Magíster' },
-        { value: 'doctorado', label: 'Doctorado' }
+        { value: 'tecnico_tecnologo', label: 'Técnico/Tecnólogo' },
+        { value: 'profesional_u_otros', label: 'Profesional u Otros' },
+        { value: 'conocimientos_informaticos', label: 'Conocimientos Informáticos' }
       ],
       tipos_pariente: [
         'Padre', 'Madre', 'Hermano(a)', 'Hijo(a)', 'Abuelo(a)', 

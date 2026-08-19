@@ -1,100 +1,134 @@
 const CandidatoModel = require('../models/candidato.model');
 const emailService = require('../services/email.service');
+const candidatoFormularioService = require('../services/candidatoFormulario.service');
 const { v4: uuidv4 } = require('uuid');
+const { separarNombreCompleto } = require('../utils/nombreCompleto.util');
+
+// Traduce los errores de la capa de servicio del formulario (HttpError con status propio)
+// a la respuesta HTTP; cualquier otro error (DB, inesperado) se sanitiza para no filtrar
+// detalles internos, igual que ya hacía el resto de endpoints de este controller.
+function manejarErrorFormulario(res, error) {
+  if (error.status) {
+    return res.status(error.status).json({ error: error.message });
+  }
+  res.status(500).json({ error: 'Error de base de datos' });
+}
 
 class CandidatoController {
   
   async validarToken(req, res) {
     try {
       const { token } = req.params;
-      
-      const query = `
-        SELECT * FROM hyd_candidatos 
-        WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
-      `;
-      
-      global.db.query(query, [token], (err, results) => {
-        if (err) {
-          return res.status(500).json({ error: 'Error de base de datos' });
+
+      const candidato = await candidatoFormularioService.obtenerFormularioPorToken(token);
+      const progreso = CandidatoModel.calcularProgreso(candidato);
+
+      res.json({
+        candidato: {
+          ...candidato,
+          progreso_formularios: progreso
         }
-        
-        if (results.length === 0) {
-          return res.status(404).json({ error: 'Token inválido o expirado' });
-        }
-        
-        const candidato = results[0];
-        const progreso = CandidatoModel.calcularProgreso(candidato);
-        
-        res.json({
-          candidato: {
-            ...candidato,
-            progreso_formularios: progreso
-          }
-        });
       });
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      manejarErrorFormulario(res, error);
     }
   }
 
   async getCandidatosPorEstado(req, res) {
     try {
       const { estado } = req.params;
-      
+
       if (!CandidatoModel.getEstadosValidos().includes(estado)) {
         return res.status(400).json({ error: 'Estado inválido' });
       }
-      
+
+      // Paginación: 20 candidatos por página (fijo), ?page=N para navegar (2026-08-19,
+      // antes traía todos los candidatos del estado de una sola vez).
+      const limit = 20;
+      const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+      const offset = (page - 1) * limit;
+
+      // Búsqueda server-side (2026-08-19): antes del paginado, el buscador filtraba en el
+      // frontend sobre TODOS los candidatos del estado ya cargados; con paginado el frontend
+      // solo tiene los 20 de la página actual, así que la búsqueda se resuelve aquí para
+      // seguir cubriendo el estado completo, no solo la página visible.
+      const search = (req.query.search || '').trim();
+      // Escapa \, % y _ (comodines/escape de LIKE) para que una búsqueda literal (ej. "50%")
+      // no dispare coincidencias no intencionadas.
+      const searchParam = search ? `%${search.replace(/[\\%_]/g, '\\$&')}%` : null;
+      const filtroBusqueda = search
+        ? ' AND (primer_nombre LIKE ? OR primer_apellido LIKE ? OR email_personal LIKE ? OR numero_documento LIKE ? OR numero_celular LIKE ? OR cliente LIKE ? OR cargo LIKE ?)'
+        : '';
+      const parametrosBusqueda = search ? Array(7).fill(searchParam) : [];
+
+      const columnas = `
+        id, primer_nombre, primer_apellido, email_personal, numero_celular,
+        cliente, cargo, oleada, fecha_citacion_entrevista, estado, reclutador_id,
+        formulario_hoja_vida_completado, formulario_datos_basicos_completado,
+        formulario_estudios_completado, formulario_experiencia_completado,
+        formulario_personal_completado, formulario_consentimiento_completado,
+        updated_at
+      `;
+
       // Administradores y usuarios de selección ven todos los candidatos
       // Reclutadores solo ven sus candidatos
-      let query, queryParams;
-      
+      let countQuery, countParams, dataQuery, dataParams;
+
       if (req.usuario.rol === 'administrador' || req.usuario.rol === 'seleccion') {
-        // Administradores y usuarios de selección ven todos los candidatos
-        query = `
-          SELECT 
-            id, primer_nombre, primer_apellido, email_personal, numero_celular,
-            cliente, cargo, oleada, fecha_citacion_entrevista, estado, reclutador_id,
-            formulario_hoja_vida_completado, formulario_datos_basicos_completado,
-            formulario_estudios_completado, formulario_experiencia_completado,
-            formulario_personal_completado, formulario_consentimiento_completado,
-            updated_at
-          FROM hyd_candidatos 
-          WHERE estado = ?
-          ORDER BY updated_at DESC
+        countQuery = `SELECT COUNT(*) as total FROM hyd_candidatos WHERE estado = ?${filtroBusqueda}`;
+        countParams = [estado, ...parametrosBusqueda];
+        dataQuery = `
+          SELECT ${columnas}
+          FROM hyd_candidatos
+          WHERE estado = ?${filtroBusqueda}
+          ORDER BY updated_at DESC, id DESC
+          LIMIT ? OFFSET ?
         `;
-        queryParams = [estado];
+        dataParams = [estado, ...parametrosBusqueda, limit, offset];
       } else {
         // Reclutadores solo ven sus candidatos
         const userId = req.usuario.id;
-        query = `
-          SELECT 
-            id, primer_nombre, primer_apellido, email_personal, numero_celular,
-            cliente, cargo, oleada, fecha_citacion_entrevista, estado, reclutador_id,
-            formulario_hoja_vida_completado, formulario_datos_basicos_completado,
-            formulario_estudios_completado, formulario_experiencia_completado,
-            formulario_personal_completado, formulario_consentimiento_completado,
-            updated_at
-          FROM hyd_candidatos 
-          WHERE estado = ? AND reclutador_id = ?
-          ORDER BY updated_at DESC
+        countQuery = `SELECT COUNT(*) as total FROM hyd_candidatos WHERE estado = ? AND reclutador_id = ?${filtroBusqueda}`;
+        countParams = [estado, userId, ...parametrosBusqueda];
+        dataQuery = `
+          SELECT ${columnas}
+          FROM hyd_candidatos
+          WHERE estado = ? AND reclutador_id = ?${filtroBusqueda}
+          ORDER BY updated_at DESC, id DESC
+          LIMIT ? OFFSET ?
         `;
-        queryParams = [estado, userId];
+        dataParams = [estado, userId, ...parametrosBusqueda, limit, offset];
       }
-      
-      console.log('Obteniendo candidatos para usuario:', req.usuario.email, 'rol:', req.usuario.rol, 'estado:', estado);
-      
-      global.db.query(query, queryParams, (err, results) => {
-        if (err) {
+
+      console.log('Obteniendo candidatos para usuario:', req.usuario.email, 'rol:', req.usuario.rol, 'estado:', estado, 'page:', page, 'search:', search || '(ninguna)');
+
+      global.db.query(countQuery, countParams, (countErr, countResults) => {
+        if (countErr) {
           return res.status(500).json({ error: 'Error de base de datos' });
         }
-        
-        const candidatosConProgreso = results.map(candidato => ({
-          ...candidato,
-          progreso_formularios: CandidatoModel.calcularProgreso(candidato)
-        }));
-        
-        res.json(candidatosConProgreso);
+
+        const total = countResults[0].total;
+
+        global.db.query(dataQuery, dataParams, (err, results) => {
+          if (err) {
+            return res.status(500).json({ error: 'Error de base de datos' });
+          }
+
+          const candidatosConProgreso = results.map(candidato => ({
+            ...candidato,
+            progreso_formularios: CandidatoModel.calcularProgreso(candidato)
+          }));
+
+          res.json({
+            candidatos: candidatosConProgreso,
+            pagination: {
+              page,
+              limit,
+              total,
+              totalPages: Math.max(Math.ceil(total / limit), 1)
+            }
+          });
+        });
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -161,40 +195,30 @@ class CandidatoController {
   async getPerfilCompleto(req, res) {
     try {
       const { candidatoId } = req.params;
-      
+
       // Los psicólogos y administradores pueden ver cualquier candidato, los reclutadores solo los suyos
-      let query, queryParams;
-      
+      let whereClause, params;
+
       if (req.usuario.rol === 'seleccion' || req.usuario.rol === 'administrador') {
-        query = 'SELECT * FROM hyd_candidatos WHERE id = ?';
-        queryParams = [candidatoId];
+        whereClause = 'c.id = ?';
+        params = [candidatoId];
       } else {
         const reclutadorId = req.usuario.id;
-        query = 'SELECT * FROM hyd_candidatos WHERE id = ? AND reclutador_id = ?';
-        queryParams = [candidatoId, reclutadorId];
+        whereClause = 'c.id = ? AND c.reclutador_id = ?';
+        params = [candidatoId, reclutadorId];
       }
-      
-      global.db.query(query, queryParams, (err, results) => {
-        if (err) {
-          return res.status(500).json({ error: 'Error de base de datos' });
+
+      const candidato = await candidatoFormularioService.obtenerPerfilConFormulario(whereClause, params);
+      const progreso = CandidatoModel.calcularProgreso(candidato);
+
+      res.json({
+        candidato: {
+          ...candidato,
+          progreso_formularios: progreso
         }
-        
-        if (results.length === 0) {
-          return res.status(404).json({ error: 'Candidato no encontrado o no tienes acceso a este candidato' });
-        }
-        
-        const candidato = results[0];
-        const progreso = CandidatoModel.calcularProgreso(candidato);
-        
-        res.json({
-          candidato: {
-            ...candidato,
-            progreso_formularios: progreso
-          }
-        });
       });
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      manejarErrorFormulario(res, error);
     }
   }
 
@@ -443,270 +467,97 @@ class CandidatoController {
     }
   }
 
-  _verificarAccesoFormulario(token, callback) {
-    const query = `SELECT formulario_consentimiento_completado FROM hyd_candidatos WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()`;
-    global.db.query(query, [token], (err, results) => {
-      if (err) return callback({ status: 500, error: 'Error de base de datos' });
-      if (results.length === 0) return callback({ status: 404, error: 'Token inválido o expirado' });
-      if (results[0].formulario_consentimiento_completado) {
-        return callback({ status: 403, error: 'Los formularios ya fueron completados. Si necesitas hacer cambios, solicita al reclutador que reenvíe el acceso.' });
-      }
-      callback(null);
-    });
-  }
+  // Los 6 endpoints de abajo (uno por paso del formulario) son delgados a propósito: toda
+  // la validación y el acceso a las tablas hyd_candidato_* vive en
+  // services/candidatoFormulario.service.js + repositories/candidatoFormulario.repository.js
+  // (piloto de arquitectura en capas, ver claude/plan.md). El resto de este controller
+  // (CRUD de "Nuevo/Editar Candidato" sobre hyd_candidatos) se queda como estaba.
 
   async actualizarHojaVida(req, res) {
     try {
       const { token } = req.params;
-      const { estado_civil } = req.body;
-
-      if (!estado_civil) {
-        return res.status(400).json({ error: 'Estado civil es requerido' });
-      }
-
-      this._verificarAccesoFormulario(token, (lockError) => {
-        if (lockError) return res.status(lockError.status).json({ error: lockError.error });
-
-        const query = `
-          UPDATE hyd_candidatos
-          SET estado_civil = ?, formulario_hoja_vida_completado = TRUE,
-              fecha_completado_hoja_vida = NOW(), updated_at = NOW()
-          WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
-        `;
-        global.db.query(query, [estado_civil, token], (err, results) => {
-          if (err) return res.status(500).json({ error: 'Error de base de datos' });
-          if (results.affectedRows === 0) return res.status(404).json({ error: 'Token inválido o expirado' });
-          res.json({ message: 'Hoja de vida actualizada exitosamente' });
-        });
-      });
+      const resultado = await candidatoFormularioService.actualizarHojaVida(token, req.body);
+      res.json(resultado);
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      manejarErrorFormulario(res, error);
     }
   }
 
   async actualizarDatosBasicos(req, res) {
     try {
       const { token } = req.params;
-      const {
-        segundo_apellido, segundo_nombre, genero, fecha_nacimiento,
-        grupo_sanguineo, eps, afp, nombre_emergencia, numero_emergencia, parentesco_emergencia
-      } = req.body;
-
-      if (!genero || !fecha_nacimiento || !grupo_sanguineo || !eps || !afp ||
-          !nombre_emergencia || !numero_emergencia || !parentesco_emergencia) {
-        return res.status(400).json({ error: 'Todos los campos requeridos deben completarse' });
-      }
-
-      this._verificarAccesoFormulario(token, (lockError) => {
-        if (lockError) return res.status(lockError.status).json({ error: lockError.error });
-
-        const query = `
-          UPDATE hyd_candidatos
-          SET segundo_apellido = ?, segundo_nombre = ?, genero = ?, fecha_nacimiento = ?,
-              grupo_sanguineo = ?, eps = ?, afp = ?, nombre_emergencia = ?,
-              numero_emergencia = ?, parentesco_emergencia = ?,
-              formulario_datos_basicos_completado = TRUE,
-              fecha_completado_datos_basicos = NOW(), updated_at = NOW()
-          WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
-        `;
-        global.db.query(query, [
-          segundo_apellido, segundo_nombre, genero, fecha_nacimiento,
-          grupo_sanguineo, eps, afp, nombre_emergencia, numero_emergencia, parentesco_emergencia,
-          token
-        ], (err, results) => {
-          if (err) return res.status(500).json({ error: 'Error de base de datos' });
-          if (results.affectedRows === 0) return res.status(404).json({ error: 'Token inválido o expirado' });
-          res.json({ message: 'Datos básicos actualizados exitosamente' });
-        });
-      });
+      const resultado = await candidatoFormularioService.actualizarDatosBasicos(token, req.body);
+      res.json(resultado);
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      manejarErrorFormulario(res, error);
     }
   }
 
   async actualizarEstudios(req, res) {
     try {
       const { token } = req.params;
-      const { nivel_estudios, titulo_obtenido, nombre_institucion, ano_finalizacion } = req.body;
-
-      if (!nivel_estudios || !titulo_obtenido || !nombre_institucion || !ano_finalizacion) {
-        return res.status(400).json({ error: 'Todos los campos son requeridos' });
-      }
-
-      this._verificarAccesoFormulario(token, (lockError) => {
-        if (lockError) return res.status(lockError.status).json({ error: lockError.error });
-
-        const query = `
-          UPDATE hyd_candidatos
-          SET nivel_estudios = ?, titulo_obtenido = ?, nombre_institucion = ?, ano_finalizacion = ?,
-              formulario_estudios_completado = TRUE,
-              fecha_completado_estudios = NOW(), updated_at = NOW()
-          WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
-        `;
-        global.db.query(query, [nivel_estudios, titulo_obtenido, nombre_institucion, ano_finalizacion, token], (err, results) => {
-          if (err) return res.status(500).json({ error: 'Error de base de datos' });
-          if (results.affectedRows === 0) return res.status(404).json({ error: 'Token inválido o expirado' });
-          res.json({ message: 'Estudios actualizados exitosamente' });
-        });
-      });
+      const resultado = await candidatoFormularioService.actualizarEstudios(token, req.body);
+      res.json(resultado);
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      manejarErrorFormulario(res, error);
     }
   }
 
   async actualizarExperiencia(req, res) {
     try {
       const { token } = req.params;
-      const {
-        nombre_empresa, cargo_desempenado, salario_experiencia,
-        fecha_inicio_experiencia, fecha_retiro_experiencia,
-        tiempo_laborado_anos, tiempo_laborado_meses,
-        motivo_retiro, ha_trabajado_asiste,
-        experiencia_comercial_certificada, experiencia_comercial_no_certificada, primer_empleo_formal
-      } = req.body;
-
-      if (!nombre_empresa || !cargo_desempenado || !salario_experiencia ||
-          !fecha_inicio_experiencia || !fecha_retiro_experiencia ||
-          tiempo_laborado_anos === undefined || tiempo_laborado_meses === undefined ||
-          !motivo_retiro || !ha_trabajado_asiste) {
-        return res.status(400).json({ error: 'Todos los campos son requeridos' });
-      }
-
-      this._verificarAccesoFormulario(token, (lockError) => {
-        if (lockError) return res.status(lockError.status).json({ error: lockError.error });
-
-        const query = `
-          UPDATE hyd_candidatos
-          SET nombre_empresa = ?, cargo_desempenado = ?, salario_experiencia = ?,
-              fecha_inicio_experiencia = ?, fecha_retiro_experiencia = ?,
-              tiempo_laborado_anos = ?, tiempo_laborado_meses = ?,
-              motivo_retiro = ?, ha_trabajado_asiste = ?,
-              experiencia_comercial_certificada = ?, experiencia_comercial_no_certificada = ?,
-              primer_empleo_formal = ?,
-              formulario_experiencia_completado = TRUE,
-              fecha_completado_experiencia = NOW(), updated_at = NOW()
-          WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
-        `;
-        global.db.query(query, [
-          nombre_empresa, cargo_desempenado, salario_experiencia,
-          fecha_inicio_experiencia, fecha_retiro_experiencia,
-          tiempo_laborado_anos, tiempo_laborado_meses,
-          motivo_retiro, ha_trabajado_asiste,
-          experiencia_comercial_certificada || null, experiencia_comercial_no_certificada || null,
-          primer_empleo_formal || null, token
-        ], (err, results) => {
-          if (err) return res.status(500).json({ error: 'Error de base de datos' });
-          if (results.affectedRows === 0) return res.status(404).json({ error: 'Token inválido o expirado' });
-          res.json({ message: 'Experiencia actualizada exitosamente' });
-        });
-      });
+      const resultado = await candidatoFormularioService.actualizarExperiencia(token, req.body);
+      res.json(resultado);
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      manejarErrorFormulario(res, error);
     }
   }
 
   async actualizarPersonal(req, res) {
     try {
       const { token } = req.params;
-      const {
-        fortalezas, aspectos_mejorar, competencias_laborales,
-        conocimiento_excel, conocimiento_powerpoint, conocimiento_word, autoevaluacion
-      } = req.body;
-
-      if (!fortalezas || !aspectos_mejorar || !competencias_laborales ||
-          !conocimiento_excel || !conocimiento_powerpoint || !conocimiento_word || !autoevaluacion) {
-        return res.status(400).json({ error: 'Todos los campos son requeridos' });
-      }
-
-      this._verificarAccesoFormulario(token, (lockError) => {
-        if (lockError) return res.status(lockError.status).json({ error: lockError.error });
-
-        const query = `
-          UPDATE hyd_candidatos
-          SET fortalezas = ?, aspectos_mejorar = ?, competencias_laborales = ?,
-              conocimiento_excel = ?, conocimiento_powerpoint = ?, conocimiento_word = ?, autoevaluacion = ?,
-              formulario_personal_completado = TRUE,
-              fecha_completado_personal = NOW(), updated_at = NOW()
-          WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
-        `;
-        global.db.query(query, [
-          fortalezas, aspectos_mejorar, competencias_laborales,
-          conocimiento_excel, conocimiento_powerpoint, conocimiento_word, autoevaluacion,
-          token
-        ], (err, results) => {
-          if (err) return res.status(500).json({ error: 'Error de base de datos' });
-          if (results.affectedRows === 0) return res.status(404).json({ error: 'Token inválido o expirado' });
-          res.json({ message: 'Información personal actualizada exitosamente' });
-        });
-      });
+      const resultado = await candidatoFormularioService.actualizarPersonal(token, req.body);
+      res.json(resultado);
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      manejarErrorFormulario(res, error);
     }
   }
 
   async actualizarConsentimiento(req, res) {
     try {
       const { token } = req.params;
-      const { ciudad_consentimiento, dia_consentimiento, mes_consentimiento, ano_consentimiento } = req.body;
-
-      if (!ciudad_consentimiento || !dia_consentimiento || !mes_consentimiento || !ano_consentimiento) {
-        return res.status(400).json({ error: 'Todos los campos son requeridos' });
-      }
-
-      this._verificarAccesoFormulario(token, (lockError) => {
-        if (lockError) return res.status(lockError.status).json({ error: lockError.error });
-
-      const query = `
-        UPDATE hyd_candidatos 
-        SET 
-          ciudad_consentimiento = ?, dia_consentimiento = ?, mes_consentimiento = ?, ano_consentimiento = ?,
-          consentimiento_aceptado = TRUE,
-          formulario_consentimiento_completado = TRUE,
-          fecha_completado_consentimiento = NOW(),
-          estado = CASE 
-            WHEN estado IN ('aprobado_final', 'rechazado_final', 'contratado') THEN estado 
-            ELSE 'formularios_completados' 
-          END,
-          updated_at = NOW()
-        WHERE token_acceso = ? AND fecha_vencimiento_token > NOW()
-      `;
-      
-      global.db.query(query, [ciudad_consentimiento, dia_consentimiento, mes_consentimiento, ano_consentimiento, token], async (err, results) => {
-          if (err) {
-            return res.status(500).json({ error: 'Error de base de datos' });
-          }
-
-          if (results.affectedRows === 0) {
-            return res.status(404).json({ error: 'Token inválido o expirado' });
-          }
-
-          const candidatoQuery = 'SELECT * FROM hyd_candidatos WHERE token_acceso = ?';
-          global.db.query(candidatoQuery, [token], async (candidatoErr, candidatoResults) => {
-            if (!candidatoErr && candidatoResults.length > 0) {
-              await emailService.enviarNotificacionCompletado(candidatoResults[0]);
-            }
-          });
-
-          res.json({ message: 'Consentimiento registrado y proceso completado exitosamente' });
-        });
-      });
+      const resultado = await candidatoFormularioService.actualizarConsentimiento(token, req.body);
+      res.json(resultado);
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      manejarErrorFormulario(res, error);
     }
   }
 
   async crearCandidato(req, res) {
     try {
       const {
-        primer_nombre, primer_apellido, email_personal, numero_celular,
-        nacionalidad, tipo_documento, numero_documento, cliente, cargo,
+        nombre_completo, email_personal, numero_celular,
+        tipo_documento, numero_documento, edad, cliente, cargo,
         oleada, ciudad, fecha_citacion_entrevista, fuente_reclutamiento,
+        contacto_llamada, contacto_whatsapp,
         observaciones_llamada, observaciones_generales, estado
       } = req.body;
 
-      if (!primer_nombre || !primer_apellido || !numero_celular || !cliente || !cargo) {
+      if (!nombre_completo || !numero_celular || !cliente || !cargo || !tipo_documento) {
         return res.status(400).json({ error: 'Todos los campos requeridos deben completarse' });
       }
+
+      // El campo "Nombre Completo" reemplaza a "Primer Nombre"/"Primer Apellido" (2026-08-18)
+      // — se separa aquí para seguir guardando los 4 campos de siempre en hyd_candidatos.
+      const nombreSeparado = separarNombreCompleto(nombre_completo);
+      if (!nombreSeparado) {
+        return res.status(400).json({ error: 'El nombre completo debe incluir al menos nombre y apellido' });
+      }
+      const { primer_nombre, segundo_nombre, primer_apellido, segundo_apellido } = nombreSeparado;
+
+      // El campo Nacionalidad se eliminó del formulario (2026-08-18) — se deriva
+      // de Tipo de Documento, que ahora es la única fuente de esa información.
+      const nacionalidad = tipo_documento === 'CC' ? 'Colombiano' : 'Venezolano';
 
       // Validación condicional del número de documento
       // Si el estado es 'contacto_exitoso', el número de documento es obligatorio
@@ -747,21 +598,23 @@ class CandidatoController {
         
         const query = `
           INSERT INTO hyd_candidatos (
-            primer_nombre, primer_apellido, email_personal, numero_celular,
-            nacionalidad, tipo_documento, numero_documento, cliente, cargo,
+            primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, email_personal, numero_celular,
+            nacionalidad, tipo_documento, numero_documento, edad, cliente, cargo,
             oleada, ciudad, fecha_citacion_entrevista, fuente_reclutamiento,
+            contacto_llamada, contacto_whatsapp,
             observaciones_llamada, observaciones_generales, token_acceso, fecha_vencimiento_token,
             estado, reclutador_id, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
         `;
 
         console.log('Creando candidato para reclutador ID:', reclutadorId);
 
         global.db.query(query, [
-          primer_nombre, primer_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular,
-          nacionalidad, tipo_documento, numero_documento || null, cliente, cargo,
+          primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular,
+          nacionalidad, tipo_documento, numero_documento || null, edad || null, cliente, cargo,
           oleada || null, ciudad || null, fecha_citacion_entrevista || null,
-          fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null,
+          fuente_reclutamiento || null, contacto_llamada || null, contacto_whatsapp || null,
+          observaciones_llamada || null, observaciones_generales || null,
           token, fechaVencimiento, estado || 'nuevo', reclutadorId
         ], (err, results) => {
           if (err) {
@@ -774,7 +627,9 @@ class CandidatoController {
             candidato: {
               id: results.insertId,
               primer_nombre,
+              segundo_nombre,
               primer_apellido,
+              segundo_apellido,
               email_personal,
               cliente,
               cargo,
@@ -795,15 +650,27 @@ class CandidatoController {
       const reclutadorId = req.usuario.id;
       
       const {
-        primer_nombre, primer_apellido, email_personal, numero_celular,
-        nacionalidad, tipo_documento, numero_documento, cliente, cargo,
-        oleada, ciudad, fecha_citacion_entrevista, fuente_reclutamiento,
+        nombre_completo, email_personal, numero_celular,
+        tipo_documento, numero_documento, cliente, cargo,
+        oleada, ciudad, fuente_reclutamiento,
         observaciones_llamada, observaciones_generales, estado
       } = req.body;
 
-      if (!primer_nombre || !primer_apellido || !numero_celular || !cliente || !cargo) {
+      if (!nombre_completo || !numero_celular || !cliente || !cargo || !tipo_documento) {
         return res.status(400).json({ error: 'Todos los campos requeridos deben completarse' });
       }
+
+      // El campo "Nombre Completo" reemplaza a "Primer Nombre"/"Primer Apellido" (2026-08-18)
+      // — se separa aquí para seguir guardando los 4 campos de siempre en hyd_candidatos.
+      const nombreSeparado = separarNombreCompleto(nombre_completo);
+      if (!nombreSeparado) {
+        return res.status(400).json({ error: 'El nombre completo debe incluir al menos nombre y apellido' });
+      }
+      const { primer_nombre, segundo_nombre, primer_apellido, segundo_apellido } = nombreSeparado;
+
+      // El campo Nacionalidad se eliminó del formulario (2026-08-18) — se deriva
+      // de Tipo de Documento, que ahora es la única fuente de esa información.
+      const nacionalidad = tipo_documento === 'CC' ? 'Colombiano' : 'Venezolano';
 
       // Validar estado si se proporciona
       if (estado && !CandidatoModel.getEstadosValidos().includes(estado)) {
@@ -855,20 +722,24 @@ class CandidatoController {
           // Actualizar candidato
           let query, queryParams;
           
+          // fecha_citacion_entrevista NO se toca aquí (2026-08-18) — ese campo se eliminó de
+          // Nuevo/Editar Candidato y ahora es responsabilidad exclusiva de actualizarFechaEntrevista
+          // (endpoint dedicado, botón "Agendar entrevista" en el perfil del candidato). Si se
+          // incluyera en este UPDATE, cada edición del candidato borraría la cita ya agendada.
           if (estado !== undefined && estado !== null && estado !== '') {
             query = esAdmin
-              ? `UPDATE hyd_candidatos SET primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, estado = ?, updated_at = NOW() WHERE id = ?`
-              : `UPDATE hyd_candidatos SET primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, estado = ?, updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
+              ? `UPDATE hyd_candidatos SET primer_nombre = ?, segundo_nombre = ?, primer_apellido = ?, segundo_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, oleada = ?, ciudad = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, estado = ?, updated_at = NOW() WHERE id = ?`
+              : `UPDATE hyd_candidatos SET primer_nombre = ?, segundo_nombre = ?, primer_apellido = ?, segundo_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, oleada = ?, ciudad = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, estado = ?, updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
             queryParams = esAdmin
-              ? [primer_nombre, primer_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, oleada || null, ciudad || null, fecha_citacion_entrevista || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, estado, candidatoId]
-              : [primer_nombre, primer_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, oleada || null, ciudad || null, fecha_citacion_entrevista || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, estado, candidatoId, reclutadorId];
+              ? [primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, oleada || null, ciudad || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, estado, candidatoId]
+              : [primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, oleada || null, ciudad || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, estado, candidatoId, reclutadorId];
           } else {
             query = esAdmin
-              ? `UPDATE hyd_candidatos SET primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, updated_at = NOW() WHERE id = ?`
-              : `UPDATE hyd_candidatos SET primer_nombre = ?, primer_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, oleada = ?, ciudad = ?, fecha_citacion_entrevista = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
+              ? `UPDATE hyd_candidatos SET primer_nombre = ?, segundo_nombre = ?, primer_apellido = ?, segundo_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, oleada = ?, ciudad = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, updated_at = NOW() WHERE id = ?`
+              : `UPDATE hyd_candidatos SET primer_nombre = ?, segundo_nombre = ?, primer_apellido = ?, segundo_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, oleada = ?, ciudad = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
             queryParams = esAdmin
-              ? [primer_nombre, primer_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, oleada || null, ciudad || null, fecha_citacion_entrevista || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, candidatoId]
-              : [primer_nombre, primer_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, oleada || null, ciudad || null, fecha_citacion_entrevista || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, candidatoId, reclutadorId];
+              ? [primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, oleada || null, ciudad || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, candidatoId]
+              : [primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, oleada || null, ciudad || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, candidatoId, reclutadorId];
           }
 
           global.db.query(query, queryParams, (err, results) => {
