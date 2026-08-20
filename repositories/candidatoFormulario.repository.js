@@ -365,12 +365,22 @@ async function finalizarConsentimiento(token) {
   );
 }
 
+// Guarda el id que devuelve FirmaCloud al recibir la hoja de vida + tratamiento de datos
+// (POST /api/reclutamiento/send), para poder correlacionar y consultar el estado después.
+async function guardarFirmaCloudId(candidatoId, firmacloudId) {
+  return queryAsync(
+    'UPDATE hyd_candidatos SET firmacloud_signature_id = ? WHERE id = ?',
+    [firmacloudId, candidatoId]
+  );
+}
+
 module.exports = {
   obtenerCandidatoConFormulario,
   obtenerEstadoAccesoToken,
   resolverCandidatoIdPorToken,
   existeOtroCandidatoConDocumento,
   obtenerCandidatoPorToken,
+  guardarFirmaCloudId,
   upsertAspiracionSalarial,
   marcarHojaVidaCompletada,
   upsertDatosBasicos,

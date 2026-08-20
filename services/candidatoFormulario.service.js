@@ -4,6 +4,7 @@
 // repositories/candidatoFormulario.repository.js.
 const repo = require('../repositories/candidatoFormulario.repository');
 const emailService = require('./email.service');
+const { enviarAFirmaCloud } = require('./firmacloudDispatchService');
 const HttpError = require('../utils/httpError');
 const { separarNombreCompleto } = require('../utils/nombreCompleto.util');
 
@@ -258,7 +259,25 @@ async function actualizarConsentimiento(token, body) {
     })
     .catch(() => {});
 
-  return { message: 'Consentimiento registrado y proceso completado exitosamente' };
+  // Envía la hoja de vida + tratamiento de datos ya armados a FirmaCloud para que el candidato
+  // los firme. Integración "mínima" para poder probar el flujo real (ver claude/plan.md,
+  // sesión "séptima ronda") — el paso 6 sigue siendo el mismo checkbox de siempre, solo se le
+  // agregó este envío. Se AWAITA (no es fire-and-forget como la notificación de arriba) para
+  // que un fallo quede visible en la respuesta mientras se prueba, en vez de perderse en
+  // silencio; aun así nunca bloquea ni revierte el guardado del consentimiento en sí.
+  const candidatoId = await repo.resolverCandidatoIdPorToken(token);
+  let firmacloudDispatch = null;
+  if (candidatoId) {
+    try {
+      const result = await enviarAFirmaCloud(candidatoId);
+      firmacloudDispatch = { ok: true, firmacloudId: result.id, firmarUrl: result.firmarUrl };
+    } catch (err) {
+      console.error('[firmacloudDispatchService] Error enviando a FirmaCloud:', err.message);
+      firmacloudDispatch = { ok: false, error: err.message };
+    }
+  }
+
+  return { message: 'Consentimiento registrado y proceso completado exitosamente', firmacloudDispatch };
 }
 
 module.exports = {
