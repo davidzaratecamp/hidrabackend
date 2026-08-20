@@ -11,6 +11,8 @@ router.get('/catalogos', candidatoController.getOpcionesCatalogo);
 router.get('/por-estado/:estado', verificarToken, verificarPermiso('ver_candidatos'), candidatoController.getCandidatosPorEstado);
 router.get('/resumen-estados', verificarToken, verificarPermiso('ver_dashboard'), candidatoController.getResumenEstados);
 router.get('/perfil/:candidatoId', verificarToken, verificarPermiso('ver_candidatos'), candidatoController.getPerfilCompleto);
+router.get('/firma-estado/:candidatoId', verificarToken, verificarPermiso('ver_candidatos'), candidatoController.getEstadoFirma);
+router.get('/firma-documento/:candidatoId/:tipo', verificarToken, verificarPermiso('ver_candidatos'), candidatoController.descargarDocumentoFirmado);
 router.get('/analytics/estados-tiempo', verificarToken, verificarPermiso('ver_estadisticas'), candidatoController.getEstadosEnTiempo);
 router.get('/analytics/clientes', verificarToken, verificarPermiso('ver_estadisticas'), candidatoController.getEstadisticasClientes);
 router.get('/analytics/cargos', verificarToken, verificarPermiso('ver_estadisticas'), candidatoController.getEstadisticasCargos);

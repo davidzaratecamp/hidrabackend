@@ -1,6 +1,7 @@
 const CandidatoModel = require('../models/candidato.model');
 const emailService = require('../services/email.service');
 const candidatoFormularioService = require('../services/candidatoFormulario.service');
+const firmacloudDispatchService = require('../services/firmacloudDispatchService');
 const { v4: uuidv4 } = require('uuid');
 const { separarNombreCompleto } = require('../utils/nombreCompleto.util');
 
@@ -12,6 +13,20 @@ function manejarErrorFormulario(res, error) {
     return res.status(error.status).json({ error: error.message });
   }
   res.status(500).json({ error: 'Error de base de datos' });
+}
+
+// Chequeo de dueño compartido por getEstadoFirma/descargarDocumentoFirmado — mismo criterio que
+// getPerfilCompleto (selección/administrador ven cualquier candidato, el resto solo los suyos),
+// pero SIN alias de tabla porque obtenerCandidatoParaFirma hace un SELECT liviano directo sobre
+// hyd_candidatos (no el JOIN con alias `c` de obtenerCandidatoConFormulario). Función suelta (no
+// método de clase) a propósito: los handlers se registran sin `.bind(candidatoController)` en la
+// mayoría de rutas, así que `this` no está disponible dentro de ellos.
+function construirWhereDueno(req) {
+  const { candidatoId } = req.params;
+  if (req.usuario.rol === 'seleccion' || req.usuario.rol === 'administrador') {
+    return { whereClause: 'id = ?', params: [candidatoId] };
+  }
+  return { whereClause: 'id = ? AND reclutador_id = ?', params: [candidatoId, req.usuario.id] };
 }
 
 class CandidatoController {
@@ -217,6 +232,35 @@ class CandidatoController {
           progreso_formularios: progreso
         }
       });
+    } catch (error) {
+      manejarErrorFormulario(res, error);
+    }
+  }
+
+  // Estado de la firma en FirmaCloud (enviado/pending/viewed/signed) — el panel de Hydra no
+  // guarda copia de los documentos, siempre consulta en vivo. `{ enviado: false }` si el
+  // candidato todavía no llegó al paso de Consentimiento (nunca se llamó a
+  // firmacloudDispatchService.enviarAFirmaCloud para él).
+  async getEstadoFirma(req, res) {
+    try {
+      const { whereClause, params } = construirWhereDueno(req);
+      const estado = await firmacloudDispatchService.consultarEstadoFirma(whereClause, params);
+      res.json(estado);
+    } catch (error) {
+      manejarErrorFormulario(res, error);
+    }
+  }
+
+  // Descarga (proxy) la hoja de vida o el tratamiento de datos ya firmados —
+  // GET /candidatos/firma-documento/:candidatoId/:tipo, tipo = 'cv' | 'tratamiento'.
+  async descargarDocumentoFirmado(req, res) {
+    try {
+      const { tipo } = req.params;
+      const { whereClause, params } = construirWhereDueno(req);
+      const { buffer, contentType, filename } = await firmacloudDispatchService.descargarDocumento(whereClause, params, tipo);
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+      res.send(buffer);
     } catch (error) {
       manejarErrorFormulario(res, error);
     }

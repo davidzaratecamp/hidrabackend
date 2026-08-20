@@ -374,6 +374,18 @@ async function guardarFirmaCloudId(candidatoId, firmacloudId) {
   );
 }
 
+// SELECT liviano (sin los JOIN de obtenerCandidatoConFormulario) usado solo para resolver el
+// `firmacloud_signature_id` de un candidato antes de consultar/descargar sus documentos
+// firmados — reutiliza el mismo whereClause con chequeo de dueño (reclutador_id) que ya arma
+// el controller para getPerfilCompleto.
+async function obtenerCandidatoParaFirma(whereClause, params) {
+  const rows = await queryAsync(
+    `SELECT id, firmacloud_signature_id, reclutador_id FROM hyd_candidatos WHERE ${whereClause}`,
+    params
+  );
+  return rows[0] || null;
+}
+
 module.exports = {
   obtenerCandidatoConFormulario,
   obtenerEstadoAccesoToken,
@@ -381,6 +393,7 @@ module.exports = {
   existeOtroCandidatoConDocumento,
   obtenerCandidatoPorToken,
   guardarFirmaCloudId,
+  obtenerCandidatoParaFirma,
   upsertAspiracionSalarial,
   marcarHojaVidaCompletada,
   upsertDatosBasicos,
