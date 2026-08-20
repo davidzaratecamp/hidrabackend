@@ -3,6 +3,7 @@
 // hojaVidaPdfService.js y tratamientoDatosPdfService.js — sin estado, sin conocimiento de
 // ningún documento en particular.
 const { rgb } = require('pdf-lib');
+const { OPS } = require('pdfjs-dist/legacy/build/pdf.js');
 
 function widthOf(font, text, size) {
   return font.widthOfTextAtSize(text, size);
@@ -112,4 +113,43 @@ function nombreCompleto(c) {
   return [c.primer_nombre, c.segundo_nombre, c.primer_apellido, c.segundo_apellido].filter(Boolean).join(' ');
 }
 
-module.exports = { fitSingleLine, wrapLines, drawTextBox, drawFit, marcarSiNo, fmtFecha, nombreCompleto };
+// ── Detección dinámica de bordes de tabla ───────────────────────────────────────────────────
+// Mismo patrón de escaneo que usa FirmaCloud (getOperatorList + filtro de trazos delgados) para
+// ubicar dónde firmar en sus módulos de RRHH/Reclutamiento, reimplementado aquí como código
+// propio de este servicio: en vez de coordenadas fijas para el borde de cada celda (que se
+// desalinean si la plantilla cambia de diseño, o que terminan copiando la posición CENTRADA de
+// un encabezado de columna en vez del borde real de la celda), se leen los trazos vectoriales
+// reales de la tabla en cada generación de PDF.
+async function getTableBorders(pdfjsPage) {
+  const opList = await pdfjsPage.getOperatorList();
+  const THIN = 1.0; // pt — grosor típico de una línea de borde de tabla
+  const horizLines = [];
+  const vertLines = [];
+  for (let i = 0; i < opList.fnArray.length; i++) {
+    if (opList.fnArray[i] !== OPS.constructPath) continue;
+    const bbox = opList.argsArray[i][2]; // [minX, maxX, minY, maxY]
+    if (!bbox) continue;
+    const [minX, maxX, minY, maxY] = bbox;
+    const w = maxX - minX, h = maxY - minY;
+    if (h <= THIN && w > 15) horizLines.push({ minX, maxX, y: (minY + maxY) / 2 });
+    else if (w <= THIN && h > 6) vertLines.push({ minY, maxY, x: (minX + maxX) / 2 });
+  }
+  return { horizLines, vertLines };
+}
+
+// Bordes verticales que cruzan una fila (rango Y) de una tabla, de izquierda a derecha — ej.
+// [180.43, 336.87, 506.62, 587.62] para una fila con 3 columnas de datos (4 bordes delimitan 3
+// celdas), o solo 2 bordes si esa fila en particular viene con columnas fusionadas en una sola
+// celda. `minX` descarta bordes a la izquierda de ese punto (ej. el borde exterior de una
+// columna de etiquetas que no interesa).
+function getRowColumnBorders(vertLines, rowY, minX = 0) {
+  return vertLines
+    .filter(v => v.minY <= rowY + 2 && v.maxY >= rowY - 2 && v.x >= minX)
+    .map(v => v.x)
+    .sort((a, b) => a - b);
+}
+
+module.exports = {
+  fitSingleLine, wrapLines, drawTextBox, drawFit, marcarSiNo, fmtFecha, nombreCompleto,
+  getTableBorders, getRowColumnBorders
+};

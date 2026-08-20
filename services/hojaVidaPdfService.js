@@ -14,7 +14,16 @@
 const fs = require('fs');
 const path = require('path');
 const { PDFDocument, StandardFonts } = require('pdf-lib');
-const { drawTextBox, drawFit, marcarSiNo, fmtFecha, nombreCompleto } = require('../utils/pdfFillHelpers');
+const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+const {
+  drawTextBox, drawFit, marcarSiNo, fmtFecha, nombreCompleto,
+  getTableBorders, getRowColumnBorders
+} = require('../utils/pdfFillHelpers');
+
+// Padding entre el borde real de la celda y donde arranca el texto — evita que el valor toque
+// la línea de la tabla.
+const CELL_PADDING = 4;
+const CELL_RIGHT_MARGIN = 4;
 
 const TEMPLATE_PATH = path.join(__dirname, '..', 'plantilla', 'hojavida.pdf');
 
@@ -36,6 +45,21 @@ async function generarHojaVidaPdf(candidato) {
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
   const [p1, p2] = pdfDoc.getPages();
+
+  // Escaneo dinámico de los bordes de la tabla "INFORMACIÓN ACADEMICA" (ver getTableBorders/
+  // getRowColumnBorders en utils/pdfFillHelpers.js — mismo patrón de escaneo de trazos
+  // vectoriales que usa FirmaCloud para ubicar dónde firmar, reimplementado aquí). Antes,
+  // Institución/Título usaban la MISMA coordenada X del encabezado de columna (que está
+  // centrado dentro de la celda), así que el valor se veía centrado en vez de pegado al borde
+  // izquierdo real de la celda — Año se veía bien de pura casualidad porque su encabezado
+  // ("AÑO DE FINALIZACIÓN") es casi tan ancho como la columna. Con el escaneo, si la plantilla
+  // se vuelve a diagramar el texto sigue arrancando en el borde real, sin recalibrar a mano.
+  const pdfjsDoc = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
+  const pdfjsPage1 = await pdfjsDoc.getPage(1);
+  const { vertLines: academicVertLines } = await getTableBorders(pdfjsPage1);
+  // minX=150 descarta el borde izquierdo de la columna de etiquetas ("BACHILLERATO:", etc.) —
+  // solo interesan los bordes que delimitan las celdas de DATOS a la derecha de esa columna.
+  const academicColumnBorders = (rowY) => getRowColumnBorders(academicVertLines, rowY, 150);
 
   // ── DATOS BÁSICOS ── filas angostas (22pt) → valor a la DERECHA de la etiqueta, no
   // debajo (no hay espacio vertical suficiente en estas 2 filas específicas).
@@ -71,12 +95,31 @@ async function generarHojaVidaPdf(candidato) {
   for (const fila of estudios) {
     const y = NIVEL_ROWS[fila.nivel_estudios];
     if (y === undefined) continue; // nivel desconocido: no debería pasar, se ignora sin tronar
+    const borders = academicColumnBorders(y);
+
     if (fila.nivel_estudios === 'conocimientos_informaticos') {
-      drawFit(p1, font, fila.descripcion, { x: 225, y, maxWidth: 365, startSize: 8.5, minSize: 6 });
+      // Fila fusionada: institución/título/año comparten una sola celda ancha -> 2 bordes.
+      if (borders.length >= 2) {
+        const x = borders[0] + CELL_PADDING;
+        const maxWidth = borders[borders.length - 1] - x - CELL_RIGHT_MARGIN;
+        drawFit(p1, font, fila.descripcion, { x, y, maxWidth, startSize: 8.5, minSize: 6 });
+      } else {
+        // Fallback si algún día la plantilla pierde estos bordes vectoriales (nunca debería
+        // pasar con hojavida.pdf actual) — mismas coordenadas ya calibradas contra el PDF real.
+        drawFit(p1, font, fila.descripcion, { x: 184, y, maxWidth: 399, startSize: 8.5, minSize: 6 });
+      }
+    } else if (borders.length >= 4) {
+      const xInstitucion = borders[0] + CELL_PADDING;
+      const xTitulo = borders[1] + CELL_PADDING;
+      const xAno = borders[2] + CELL_PADDING;
+      drawFit(p1, font, fila.nombre_institucion, { x: xInstitucion, y, maxWidth: borders[1] - xInstitucion - CELL_RIGHT_MARGIN, startSize: 8.5, minSize: 6 });
+      drawFit(p1, font, fila.titulo_obtenido, { x: xTitulo, y, maxWidth: borders[2] - xTitulo - CELL_RIGHT_MARGIN, startSize: 8.5, minSize: 6 });
+      drawFit(p1, font, fila.ano_finalizacion, { x: xAno, y, maxWidth: borders[3] - xAno - CELL_RIGHT_MARGIN, startSize: 8.5, minSize: 6 });
     } else {
-      drawFit(p1, font, fila.nombre_institucion, { x: 225, y, maxWidth: 160, startSize: 8.5, minSize: 6 });
-      drawFit(p1, font, fila.titulo_obtenido, { x: 393, y, maxWidth: 115, startSize: 8.5, minSize: 6 });
-      drawFit(p1, font, fila.ano_finalizacion, { x: 512, y, maxWidth: 78, startSize: 8.5, minSize: 6 });
+      // Fallback (ver comentario arriba)
+      drawFit(p1, font, fila.nombre_institucion, { x: 184, y, maxWidth: 149, startSize: 8.5, minSize: 6 });
+      drawFit(p1, font, fila.titulo_obtenido, { x: 341, y, maxWidth: 162, startSize: 8.5, minSize: 6 });
+      drawFit(p1, font, fila.ano_finalizacion, { x: 511, y, maxWidth: 73, startSize: 8.5, minSize: 6 });
     }
   }
 
