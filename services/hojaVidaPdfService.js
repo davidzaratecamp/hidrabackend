@@ -41,7 +41,7 @@ async function generarHojaVidaPdf(candidato) {
   // debajo (no hay espacio vertical suficiente en estas 2 filas específicas).
   drawFit(p1, font, fmtFecha(candidato.fecha_citacion_entrevista), { x: 108, y: 681.56, maxWidth: 225 });
   drawFit(p1, font, candidato.fuente_reclutamiento, { x: 427, y: 676.4, maxWidth: 165 });
-  drawFit(p1, font, candidato.cargo, { x: 178, y: 659.16, maxWidth: 155 });
+  drawFit(p1, font, candidato.cargo, { x: 183, y: 659.16, maxWidth: 150 });
   drawFit(p1, font, candidato.aspiracion_salarial, { x: 424, y: 659.16, maxWidth: 168 });
 
   // ── DATOS PERSONALES ───────────────────────────────────────────────────────
