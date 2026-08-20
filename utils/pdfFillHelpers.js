@@ -101,7 +101,11 @@ function fmtFecha(d) {
   if (!d) return '';
   const date = new Date(d);
   if (Number.isNaN(date.getTime())) return String(d);
-  return date.toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  // timeZone: 'UTC' — MySQL entrega fechas sin hora (DATE) como medianoche UTC; sin fijar la
+  // zona acá, toLocaleDateString las formatea en la zona horaria del servidor, y en zonas
+  // detrás de UTC (Bogotá, UTC-5) el día se corre uno hacia atrás (ej. 2025-08-15 salía
+  // "14/08/2025"). Fijar UTC en ambos lados (interpretación y formato) evita el corrimiento.
+  return date.toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' });
 }
 
 function nombreCompleto(c) {

@@ -40,9 +40,9 @@ async function generarHojaVidaPdf(candidato) {
   // ── DATOS BÁSICOS ── filas angostas (22pt) → valor a la DERECHA de la etiqueta, no
   // debajo (no hay espacio vertical suficiente en estas 2 filas específicas).
   drawFit(p1, font, fmtFecha(candidato.fecha_citacion_entrevista), { x: 108, y: 681.56, maxWidth: 225 });
-  drawFit(p1, font, candidato.fuente_reclutamiento, { x: 402, y: 676.4, maxWidth: 190 });
-  drawFit(p1, font, candidato.cargo, { x: 108, y: 659.16, maxWidth: 225 });
-  drawFit(p1, font, candidato.aspiracion_salarial, { x: 419, y: 659.16, maxWidth: 173 });
+  drawFit(p1, font, candidato.fuente_reclutamiento, { x: 412, y: 676.4, maxWidth: 180 });
+  drawFit(p1, font, candidato.cargo, { x: 128, y: 659.16, maxWidth: 205 });
+  drawFit(p1, font, candidato.aspiracion_salarial, { x: 424, y: 659.16, maxWidth: 168 });
 
   // ── DATOS PERSONALES ───────────────────────────────────────────────────────
   drawFit(p1, font, nombreCompleto(candidato), { x: 30, y: 609, maxWidth: 250 });
@@ -87,12 +87,16 @@ async function generarHojaVidaPdf(candidato) {
     drawFit(p1, font, empresaActual.cargo_desempenado, { x: 382, y: 301.54, maxWidth: 82 });
     drawFit(p1, font, empresaActual.salario, { x: 513, y: 301.54, maxWidth: 78 });
     drawTextBox(p1, font, empresaActual.funciones, { x: 30, y: 264, maxWidth: 555, maxHeight: 24, startSize: 8, minSize: 6.5 });
-    drawFit(p1, font, fmtFecha(empresaActual.fecha_inicio), { x: 87, y: 243.45, maxWidth: 108, startSize: 8 });
-    drawFit(p1, font, fmtFecha(empresaActual.fecha_retiro), { x: 228, y: 238.3, maxWidth: 110, startSize: 8 });
-    const tiempo = [empresaActual.tiempo_laborado_anos ? `${empresaActual.tiempo_laborado_anos}a` : null,
-      empresaActual.tiempo_laborado_meses ? `${empresaActual.tiempo_laborado_meses}m` : null].filter(Boolean).join(' ');
+    drawFit(p1, font, fmtFecha(empresaActual.fecha_inicio), { x: 92, y: 243.45, maxWidth: 103, startSize: 8 });
+    drawFit(p1, font, fmtFecha(empresaActual.fecha_retiro), { x: 233, y: 238.3, maxWidth: 105, startSize: 8 });
+    // != null (no truthy): 0 es un valor legítimo ("0 años, 3 meses") — con truthy check se
+    // perdía silenciosamente cuando el candidato tenía menos de 1 año/mes en algún campo.
+    const tiempo = [
+      empresaActual.tiempo_laborado_anos != null ? `${empresaActual.tiempo_laborado_anos}a` : null,
+      empresaActual.tiempo_laborado_meses != null ? `${empresaActual.tiempo_laborado_meses}m` : null,
+    ].filter(Boolean).join(' ');
     drawFit(p1, font, tiempo, { x: 384, y: 238.3, maxWidth: 84, startSize: 8, minSize: 6 });
-    drawFit(p1, font, empresaActual.motivo_retiro, { x: 502, y: 233.14, maxWidth: 90, startSize: 7, minSize: 5.5 });
+    drawFit(p1, font, empresaActual.motivo_retiro, { x: 506, y: 237.14, maxWidth: 86, startSize: 7, minSize: 5.5 });
   }
 
   // ── ANTERIOR EMPLEO (orden 2) — hoy el formulario de Hydra solo captura la empresa
