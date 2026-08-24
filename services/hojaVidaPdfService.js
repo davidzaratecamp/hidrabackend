@@ -63,7 +63,10 @@ async function generarHojaVidaPdf(candidato) {
 
   // ── DATOS BÁSICOS ── filas angostas (22pt) → valor a la DERECHA de la etiqueta, no
   // debajo (no hay espacio vertical suficiente en estas 2 filas específicas).
-  drawFit(p1, font, fmtFecha(candidato.fecha_citacion_entrevista), { x: 108, y: 681.56, maxWidth: 225 });
+  // x=184 (antes 108): la fila tiene su propio recuadro en blanco para el valor, entre
+  // x=180.4 y x=336.3 — con x=108 la fecha arrancaba todavía dentro de la celda de la
+  // etiqueta "FECHA DE ENTREVISTA:" en vez de en el recuadro vacío de al lado.
+  drawFit(p1, font, fmtFecha(candidato.fecha_citacion_entrevista), { x: 184, y: 681.56, maxWidth: 148 });
   drawFit(p1, font, candidato.fuente_reclutamiento, { x: 427, y: 676.4, maxWidth: 165 });
   drawFit(p1, font, candidato.cargo, { x: 183, y: 659.16, maxWidth: 150 });
   drawFit(p1, font, candidato.aspiracion_salarial, { x: 424, y: 659.16, maxWidth: 168 });
@@ -140,9 +143,10 @@ async function generarHojaVidaPdf(candidato) {
     drawFit(p1, font, fmtFecha(empresaActual.fecha_retiro), { x: 243, y: 242.3, maxWidth: 93, startSize: 8 });
     // != null (no truthy): 0 es un valor legítimo ("0 años, 3 meses") — con truthy check se
     // perdía silenciosamente cuando el candidato tenía menos de 1 año/mes en algún campo.
+    const formatoUnidad = (valor, singular, plural) => `${valor} ${Number(valor) === 1 ? singular : plural}`;
     const tiempo = [
-      empresaActual.tiempo_laborado_anos != null ? `${empresaActual.tiempo_laborado_anos}a` : null,
-      empresaActual.tiempo_laborado_meses != null ? `${empresaActual.tiempo_laborado_meses}m` : null,
+      empresaActual.tiempo_laborado_anos != null ? formatoUnidad(empresaActual.tiempo_laborado_anos, 'año', 'años') : null,
+      empresaActual.tiempo_laborado_meses != null ? formatoUnidad(empresaActual.tiempo_laborado_meses, 'mes', 'meses') : null,
     ].filter(Boolean).join(' ');
     drawFit(p1, font, tiempo, { x: 394, y: 242.3, maxWidth: 74, startSize: 8, minSize: 6 });
     drawFit(p1, font, empresaActual.motivo_retiro, { x: 506, y: 237.14, maxWidth: 86, startSize: 7, minSize: 5.5 });
@@ -217,7 +221,10 @@ async function generarHojaVidaPdf(candidato) {
   // la sección de checkboxes "Marque con un (X) según corresponda"; con 34 se invadía esa
   // sección cuando el texto ocupaba 2+ líneas.
   drawTextBox(p2, font, candidato.estado_salud_actual, { x: 20, y: 276, maxWidth: 305, maxHeight: 17, startSize: 8.5, minSize: 6.5 });
-  drawFit(p2, fontBold, candidato.autoevaluacion, { x: 505, y: 271.78, maxWidth: 30, startSize: 10 });
+  // x=459 (antes 505): la plantilla trae la línea "CALIFIQUESE DE 1 A 5 = ______" con el
+  // renglón en blanco entre x=434.2 y x=489.9 — con x=505 el número se dibujaba a la
+  // DERECHA de esa línea, no sobre ella. x=459 lo centra sobre el renglón.
+  drawFit(p2, fontBold, candidato.autoevaluacion, { x: 459, y: 271.78, maxWidth: 50, startSize: 10 });
 
   marcarSiNo(p2, candidato.experiencia_comercial_certificada, {
     si: { x: 324.81, y: 229.7, w: 57.82, h: 10 },
