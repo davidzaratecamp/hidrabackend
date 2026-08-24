@@ -985,17 +985,27 @@ class CandidatoController {
       const { candidatoId } = req.params;
       const { fecha_citacion_entrevista } = req.body;
       const reclutadorId = req.usuario.id;
+      const rol = req.usuario.rol;
+      const esAdmin = rol === 'administrador' || rol === 'seleccion';
 
-      const query = `
-        UPDATE hyd_candidatos
-        SET
-          fecha_citacion_entrevista = ?,
-          estado = CASE WHEN estado IN ('nuevo', 'contacto_exitoso', 'formularios_completados') THEN 'citado' ELSE estado END,
-          updated_at = NOW()
-        WHERE id = ? AND reclutador_id = ?
-      `;
+      const query = esAdmin
+        ? `UPDATE hyd_candidatos
+           SET
+             fecha_citacion_entrevista = ?,
+             estado = CASE WHEN estado IN ('nuevo', 'contacto_exitoso', 'formularios_completados') THEN 'citado' ELSE estado END,
+             updated_at = NOW()
+           WHERE id = ?`
+        : `UPDATE hyd_candidatos
+           SET
+             fecha_citacion_entrevista = ?,
+             estado = CASE WHEN estado IN ('nuevo', 'contacto_exitoso', 'formularios_completados') THEN 'citado' ELSE estado END,
+             updated_at = NOW()
+           WHERE id = ? AND reclutador_id = ?`;
+      const queryParams = esAdmin
+        ? [fecha_citacion_entrevista || null, candidatoId]
+        : [fecha_citacion_entrevista || null, candidatoId, reclutadorId];
 
-      global.db.query(query, [fecha_citacion_entrevista || null, candidatoId, reclutadorId], (err, results) => {
+      global.db.query(query, queryParams, (err, results) => {
         if (err) {
           console.error('Error actualizando fecha de entrevista:', err);
           return res.status(500).json({ error: 'Error actualizando fecha de entrevista' });
