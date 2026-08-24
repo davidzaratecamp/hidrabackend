@@ -1054,6 +1054,85 @@ class CandidatoController {
     }
   }
 
+  // Lista liviana de reclutadores activos para el selector del modal "Reasignar" - a diferencia
+  // de authController.obtenerReclutadores (admin-only, trae candidatos_asignados y otras columnas
+  // para el panel de administración), esta es de solo id/nombre y accesible también al reclutador
+  // que la usa para elegir a quién transferirle un candidato.
+  async getReclutadoresActivos(req, res) {
+    try {
+      global.db.query(
+        `SELECT id, nombre_completo FROM hyd_usuarios WHERE rol = 'reclutador' AND activo = TRUE ORDER BY nombre_completo`,
+        (err, results) => {
+          if (err) {
+            console.error('Error obteniendo reclutadores activos:', err);
+            return res.status(500).json({ error: 'Error de base de datos' });
+          }
+          res.json({ reclutadores: results });
+        }
+      );
+    } catch (error) {
+      console.error('Error en getReclutadoresActivos:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  // Botón "Reasignar" (transferencia directa entre analistas, sin flujo de solicitud/aceptación -
+  // decidido con el usuario). Cualquier reclutador puede reasignar SU PROPIO candidato a otro
+  // reclutador activo; administrador puede reasignar cualquiera. Deja rastro básico de auditoría
+  // (reasignado_por_id/fecha_reasignacion, migración 013) sin bloquear la transferencia.
+  async reasignarCandidato(req, res) {
+    try {
+      const { candidatoId } = req.params;
+      const { nuevo_reclutador_id } = req.body;
+      const usuarioActualId = req.usuario.id;
+      const rol = req.usuario.rol;
+      const esAdmin = rol === 'administrador' || rol === 'seleccion';
+
+      const nuevoId = parseInt(nuevo_reclutador_id, 10);
+      if (!nuevoId) {
+        return res.status(400).json({ error: 'nuevo_reclutador_id es requerido' });
+      }
+
+      global.db.query(
+        `SELECT id, nombre_completo FROM hyd_usuarios WHERE id = ? AND rol = 'reclutador' AND activo = TRUE`,
+        [nuevoId],
+        (errDestino, destinatarios) => {
+          if (errDestino) {
+            console.error('Error verificando reclutador destino:', errDestino);
+            return res.status(500).json({ error: 'Error de base de datos' });
+          }
+          if (destinatarios.length === 0) {
+            return res.status(400).json({ error: 'El analista destino no existe, no está activo o no tiene rol de reclutador' });
+          }
+
+          const query = esAdmin
+            ? `UPDATE hyd_candidatos SET reclutador_id = ?, reasignado_por_id = ?, fecha_reasignacion = NOW(), updated_at = NOW() WHERE id = ?`
+            : `UPDATE hyd_candidatos SET reclutador_id = ?, reasignado_por_id = ?, fecha_reasignacion = NOW(), updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
+          const queryParams = esAdmin
+            ? [nuevoId, usuarioActualId, candidatoId]
+            : [nuevoId, usuarioActualId, candidatoId, usuarioActualId];
+
+          global.db.query(query, queryParams, (err, results) => {
+            if (err) {
+              console.error('Error reasignando candidato:', err);
+              return res.status(500).json({ error: 'Error al reasignar el candidato' });
+            }
+            if (results.affectedRows === 0) {
+              return res.status(404).json({ error: 'Candidato no encontrado o no tienes acceso' });
+            }
+            res.json({
+              message: 'Candidato reasignado correctamente',
+              nuevo_reclutador: destinatarios[0].nombre_completo
+            });
+          });
+        }
+      );
+    } catch (error) {
+      console.error('Error en reasignarCandidato:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
   async cambiarEstado(req, res) {
     try {
       const { candidatoId } = req.params;

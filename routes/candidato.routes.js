@@ -24,6 +24,8 @@ router.put('/editar/:candidatoId', verificarToken, verificarPermiso('editar_cand
 router.put('/cambiar-estado/:candidatoId', verificarToken, verificarPermiso('editar_candidatos'), candidatoController.cambiarEstado);
 router.put('/fecha-entrevista/:candidatoId', verificarToken, verificarPermiso('agendar_entrevistas'), candidatoController.actualizarFechaEntrevista);
 router.put('/no-citado/:candidatoId', verificarToken, verificarPermiso('agendar_entrevistas'), candidatoController.marcarNoCitado);
+router.get('/reclutadores-activos', verificarToken, verificarPermiso('reasignar_candidatos'), candidatoController.getReclutadoresActivos);
+router.put('/reasignar/:candidatoId', verificarToken, verificarPermiso('reasignar_candidatos'), candidatoController.reasignarCandidato);
 
 // Antecedentes (ADRES/POL/COMP/PROCU), cada uno con su propio documento de soporte (PDF/imagen).
 // El archivo se procesa con un wrapper propio (no el middleware de multer directo) para poder

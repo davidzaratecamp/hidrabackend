@@ -1,4 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
+const ExcelJS = require('exceljs');
 
 // Helper para poder usar await con global.db.query (callback-style), usado solo por
 // getCandidatosTotal (2026-08-19) - el resto del archivo se deja en su estilo callback
@@ -10,6 +11,183 @@ function queryAsync(sql, params = []) {
       else resolve(results);
     });
   });
+}
+
+// --- Helpers de texto para el Excel "BASE RECLUTAMIENTO" (exportarExcel) ---
+
+function textoSiNo(valor) {
+  if (valor === 'si') return 'Sí';
+  if (valor === 'no') return 'No';
+  return '';
+}
+
+function textoAntecedente(valor) {
+  if (valor === 'aprobado') return 'Aprobado';
+  if (valor === 'no_aprobado') return 'No aprobado';
+  return '';
+}
+
+function textoAprobadoFinal(valor) {
+  if (valor === true || valor === 1) return 'Sí';
+  if (valor === false || valor === 0) return 'No';
+  return '';
+}
+
+function textoAsistencia(valor) {
+  if (valor === 'asistio') return 'Asistió';
+  if (valor === 'no_asistio') return 'No asistió';
+  return 'Pendiente';
+}
+
+// Mismo texto/prioridad que getEstadoTexto() en CandidatosSeleccion.jsx.
+function textoEstadoGestion(c) {
+  if (c.evaluacion_total !== null && c.aprobacion_final === null) {
+    return 'Pendiente Decisión Final';
+  }
+  const mapa = {
+    citado: 'Citado',
+    no_asistio: 'No asistió',
+    entrevistado: 'Entrevistado',
+    aprobado_final: 'Aprobado Final',
+    rechazado_final: 'Rechazado Final',
+    rechazado: 'Rechazado',
+    contratado: 'Contratado'
+  };
+  return mapa[c.estado] || c.estado;
+}
+
+// c.fecha_citacion_entrevista llega como Date (columna DATE, sin dateStrings en el pool) -
+// se formatea con getters locales para no arrastrar corrimientos de zona horaria.
+function formatearFechaExcel(fecha) {
+  if (!fecha) return '';
+  const d = new Date(fecha);
+  if (isNaN(d.getTime())) return '';
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${d.getFullYear()}`;
+}
+
+// Estructura de encabezados del Excel oficial "BASE RECLUTAMIENTO": grupos de 1 columna se
+// fusionan verticalmente (fila 1 y 2), grupos con `sub` fusionan horizontalmente en la fila 1 y
+// reparten los subtítulos en la fila 2.
+const GRUPOS_ENCABEZADO_EXCEL = [
+  { label: 'FECHA' },
+  { label: 'ANALISTA' },
+  { label: 'CAMPAÑA' },
+  { label: 'CARGO' },
+  { label: 'NOMBRE' },
+  { label: 'TIPO DE DOC' },
+  { label: 'DOCUMENTO' },
+  { label: 'EDAD' },
+  { label: 'CORREO' },
+  { label: 'CONTACTO', sub: ['LLAMADA', 'WHATSAPP'] },
+  { label: 'PERFIL' },
+  { label: 'CITADO' },
+  { label: 'ESTADO GESTIÓN RECLUTAMIENTO' },
+  { label: 'SEGUIMIENTO ASISTENCIA', sub: ['LLAMADA', 'GLOBAL/WA'] },
+  { label: 'ASISTE ENTREVISTA' },
+  { label: 'MOTIVO INASISTENCIA' },
+  { label: 'ANTECEDENTES', sub: ['ADRES', 'POL', 'COMP', 'PROCU'] },
+  { label: 'APROBADO' },
+  { label: '¿POR QUÉ NO APROBÓ?' }
+];
+
+// PERFIL (sin dato en el sistema hoy, columna en blanco a propósito) y SEGUIMIENTO ASISTENCIA
+// (reusa contacto_llamada/contacto_whatsapp del formulario "Nuevo Candidato" - es el único dato
+// de contacto que captura el sistema) - decidido con el usuario, ver claude/lastcontext.md.
+function filaCandidatoExcel(c) {
+  const nombreCompleto = [c.primer_nombre, c.segundo_nombre, c.primer_apellido, c.segundo_apellido]
+    .filter(Boolean)
+    .join(' ');
+  const contactoLlamada = textoSiNo(c.contacto_llamada);
+  const contactoWhatsapp = textoSiNo(c.contacto_whatsapp);
+
+  return [
+    formatearFechaExcel(c.fecha_citacion_entrevista),
+    c.nombre_reclutador || '',
+    c.cliente || '',
+    c.cargo || '',
+    nombreCompleto,
+    c.tipo_documento || '',
+    c.numero_documento || '',
+    c.edad ?? '',
+    c.email_personal || '',
+    contactoLlamada,
+    contactoWhatsapp,
+    '',
+    'Sí',
+    textoEstadoGestion(c),
+    contactoLlamada,
+    contactoWhatsapp,
+    textoAsistencia(c.asistio_citacion),
+    c.motivo_inasistencia || '',
+    textoAntecedente(c.antecedentes_adres),
+    textoAntecedente(c.antecedentes_pol),
+    textoAntecedente(c.antecedentes_comp),
+    textoAntecedente(c.antecedentes_procu),
+    textoAprobadoFinal(c.aprobacion_final),
+    c.aprobacion_final_razon || ''
+  ];
+}
+
+// Arma el workbook (encabezado de 2 filas fusionado + filas de datos) a partir de un array de
+// candidatos ya consultado - compartido por exportarExcel (citados) y exportarExcelAprobados
+// (perfiles aprobados), que solo difieren en el WHERE/ORDER BY de la consulta y el nombre del
+// archivo.
+function construirWorkbookSeleccion(candidatos) {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Selección');
+
+  const row1 = sheet.getRow(1);
+  const row2 = sheet.getRow(2);
+  let colIndex = 1;
+
+  GRUPOS_ENCABEZADO_EXCEL.forEach((grupo) => {
+    const span = grupo.sub ? grupo.sub.length : 1;
+    const startCol = colIndex;
+    const endCol = colIndex + span - 1;
+
+    row1.getCell(startCol).value = grupo.label;
+    if (span > 1) {
+      sheet.mergeCells(1, startCol, 1, endCol);
+      grupo.sub.forEach((subLabel, i) => {
+        row2.getCell(startCol + i).value = subLabel;
+      });
+    } else {
+      sheet.mergeCells(1, startCol, 2, startCol);
+    }
+    sheet.getColumn(startCol).width = Math.max(grupo.label.length, 12);
+
+    colIndex = endCol + 1;
+  });
+
+  const totalColumnas = colIndex - 1;
+  [row1, row2].forEach((row) => {
+    for (let i = 1; i <= totalColumnas; i++) {
+      const cell = row.getCell(i);
+      cell.font = { bold: true };
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+      cell.border = {
+        top: { style: 'thin' }, left: { style: 'thin' },
+        bottom: { style: 'thin' }, right: { style: 'thin' }
+      };
+    }
+  });
+  row1.height = 20;
+  row2.height = 18;
+
+  candidatos.forEach((c) => {
+    sheet.addRow(filaCandidatoExcel(c));
+  });
+
+  return workbook;
+}
+
+function enviarWorkbookExcel(res, workbook, nombreArchivo) {
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${nombreArchivo}"`);
+  return workbook.xlsx.write(res).then(() => res.end());
 }
 
 class SeleccionController {
@@ -54,6 +232,14 @@ class SeleccionController {
       if (req.query.estado) {
         condiciones.push('c.estado = ?');
         params.push(req.query.estado);
+      }
+      if (req.query.fechaDesde) {
+        condiciones.push('c.fecha_citacion_entrevista >= ?');
+        params.push(req.query.fechaDesde);
+      }
+      if (req.query.fechaHasta) {
+        condiciones.push('c.fecha_citacion_entrevista <= ?');
+        params.push(req.query.fechaHasta);
       }
 
       const whereExtra = condiciones.length ? ` AND ${condiciones.join(' AND ')}` : '';
@@ -102,6 +288,115 @@ class SeleccionController {
       });
     } catch (error) {
       console.error('Error en getCandidatosCitados:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  // Exporta a Excel (.xlsx) los candidatos citados, con el mismo filtro de búsqueda/operación/
+  // asistencia/estado que la pantalla, más un rango de fechas obligatorio sobre
+  // fecha_citacion_entrevista (columna FECHA del Excel). Sin paginado: exporta todo lo que
+  // matchee el filtro, no solo la página visible.
+  async exportarExcel(req, res) {
+    try {
+      const { fechaDesde, fechaHasta } = req.query;
+      if (!fechaDesde || !fechaHasta) {
+        return res.status(400).json({ error: 'fechaDesde y fechaHasta son requeridos' });
+      }
+
+      const search = (req.query.search || '').trim();
+      const searchParam = search ? `%${search.replace(/[\\%_]/g, '\\$&')}%` : null;
+
+      const condiciones = ['c.fecha_citacion_entrevista >= ?', 'c.fecha_citacion_entrevista <= ?'];
+      const params = [fechaDesde, fechaHasta];
+
+      if (search) {
+        condiciones.push('(c.primer_nombre LIKE ? OR c.primer_apellido LIKE ? OR c.email_personal LIKE ? OR c.numero_celular LIKE ?)');
+        params.push(searchParam, searchParam, searchParam, searchParam);
+      }
+      if (req.query.operacion) {
+        condiciones.push('c.cliente = ?');
+        params.push(req.query.operacion);
+      }
+      if (req.query.asistencia) {
+        condiciones.push('c.asistio_citacion = ?');
+        params.push(req.query.asistencia);
+      }
+      if (req.query.estado) {
+        condiciones.push('c.estado = ?');
+        params.push(req.query.estado);
+      }
+
+      const candidatos = await queryAsync(
+        `SELECT
+          c.*,
+          u.nombre_completo as nombre_reclutador
+        FROM hyd_candidatos c
+        LEFT JOIN hyd_usuarios u ON c.reclutador_id = u.id
+        WHERE c.fecha_citacion_entrevista IS NOT NULL AND ${condiciones.join(' AND ')}
+        ORDER BY c.fecha_citacion_entrevista DESC, c.created_at DESC, c.id DESC`,
+        params
+      );
+
+      const workbook = construirWorkbookSeleccion(candidatos);
+      await enviarWorkbookExcel(res, workbook, `seleccion_${fechaDesde}_a_${fechaHasta}.xlsx`);
+    } catch (error) {
+      console.error('Error en exportarExcel:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  // Exporta a Excel (.xlsx) los perfiles aprobados finalmente (misma estructura de columnas que
+  // exportarExcel). A diferencia de los citados, acá el rango de fechas es opcional (filtra sobre
+  // fecha_evaluacion) - mismo criterio que los filtros ya existentes de PerfilesAprobados.jsx, que
+  // también son opcionales.
+  async exportarExcelAprobados(req, res) {
+    try {
+      const { fechaDesde, fechaHasta, operacion, puntajeMin } = req.query;
+      const search = (req.query.search || '').trim();
+      const searchParam = search ? `%${search.replace(/[\\%_]/g, '\\$&')}%` : null;
+
+      const condiciones = [`c.estado = 'aprobado_final'`, 'c.aprobacion_final = TRUE'];
+      const params = [];
+
+      if (fechaDesde) {
+        condiciones.push('c.fecha_evaluacion >= ?');
+        params.push(fechaDesde);
+      }
+      if (fechaHasta) {
+        condiciones.push('c.fecha_evaluacion <= ?');
+        params.push(`${fechaHasta} 23:59:59`);
+      }
+      if (operacion) {
+        condiciones.push('c.cliente = ?');
+        params.push(operacion);
+      }
+      if (puntajeMin) {
+        condiciones.push('c.evaluacion_total >= ?');
+        params.push(parseFloat(puntajeMin));
+      }
+      if (search) {
+        condiciones.push('(c.primer_nombre LIKE ? OR c.primer_apellido LIKE ? OR c.email_personal LIKE ? OR c.numero_celular LIKE ?)');
+        params.push(searchParam, searchParam, searchParam, searchParam);
+      }
+
+      const candidatos = await queryAsync(
+        `SELECT
+          c.*,
+          u.nombre_completo as nombre_reclutador
+        FROM hyd_candidatos c
+        LEFT JOIN hyd_usuarios u ON c.reclutador_id = u.id
+        WHERE ${condiciones.join(' AND ')}
+        ORDER BY c.fecha_aprobacion_final DESC, c.evaluacion_total DESC`,
+        params
+      );
+
+      const workbook = construirWorkbookSeleccion(candidatos);
+      const nombreArchivo = fechaDesde && fechaHasta
+        ? `perfiles_aprobados_${fechaDesde}_a_${fechaHasta}.xlsx`
+        : 'perfiles_aprobados.xlsx';
+      await enviarWorkbookExcel(res, workbook, nombreArchivo);
+    } catch (error) {
+      console.error('Error en exportarExcelAprobados:', error);
       res.status(500).json({ error: error.message });
     }
   }
