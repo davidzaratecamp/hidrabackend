@@ -149,9 +149,7 @@ class CandidatoModel {
       clientes: [
         { value: 'Staff Operacional', label: 'Staff Operacional' },
         { value: 'Staff Administrativo', label: 'Staff Administrativo' },
-        { value: 'Claro', label: 'Claro' },
         { value: 'Obamacare', label: 'Obamacare' },
-        { value: 'Majority', label: 'Majority' },
         { value: 'Hogar', label: 'Hogar' },
         { value: 'Móvil', label: 'Móvil' },
         { value: 'TyT', label: 'TyT' },
@@ -164,7 +162,7 @@ class CandidatoModel {
         { value: 'Barranquilla', label: 'Barranquilla' }
       ],
       fuentes_reclutamiento: [
-        { value: 'Portal Web', label: 'Portal Web' },
+        { value: 'Computrabajo', label: 'Computrabajo' },
         { value: 'LinkedIn', label: 'LinkedIn' },
         { value: 'Referido Empleado', label: 'Referido Empleado' },
         { value: 'Referido Externo', label: 'Referido Externo' },

@@ -28,25 +28,15 @@ router.get('/candidatos-citados', verificarRolLectura, seleccionController.getCa
 router.get('/candidatos-total', verificarRolLectura, seleccionController.getCandidatosTotal);
 router.get('/candidatos-aprobados', verificarRolLectura, seleccionController.getCandidatosAprobados);
 router.get('/candidatos-rechazados', verificarRolLectura, seleccionController.getCandidatosRechazados);
-router.get('/oleadas', verificarRolLectura, seleccionController.getOleadas);
 router.get('/estadisticas', verificarRolLectura, seleccionController.getEstadisticasSeleccion);
 router.get('/estadisticas-aprobados', verificarRolLectura, seleccionController.getEstadisticasAprobados);
 
-// Rutas de gestión de oleadas
-router.get('/oleada-actual/:operacion/:campana', verificarRolLectura, seleccionController.getOleadaActual);
-router.get('/oleadas-disponibles/:operacion/:campana', verificarRolSeleccion, seleccionController.getOleadasDisponibles);
-router.post('/inicializar-oleadas', verificarRolSeleccion, seleccionController.inicializarOleadas);
-
 // Rutas de gestión de candidatos (escritura: solo seleccion y administrador)
 router.put('/candidatos/:candidatoId/asistencia', verificarRolSeleccion, seleccionController.marcarAsistencia);
-router.put('/candidatos/:candidatoId/oleada', verificarRolSeleccion, seleccionController.asignarOleada);
 router.put('/candidatos/:candidatoId/estado', verificarRolSeleccion, seleccionController.actualizarEstado);
 router.put('/candidatos/:candidatoId/operacion-campana', verificarRolSeleccion, seleccionController.actualizarOperacionCampana);
 router.put('/candidatos/:candidatoId/evaluacion', verificarRolSeleccion, seleccionController.guardarEvaluacion);
 router.put('/candidatos/:candidatoId/decision-final', verificarRolSeleccion, seleccionController.tomarDecisionFinal);
-
-// Rutas de gestión de oleadas
-router.post('/oleadas', verificarRolSeleccion, seleccionController.crearOleada);
 
 
 module.exports = router;

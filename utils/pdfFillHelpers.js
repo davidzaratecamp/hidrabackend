@@ -24,20 +24,25 @@ function fitSingleLine(font, text, maxWidth, { startSize = 9, minSize = 6 } = {}
 }
 
 // Envuelve texto en líneas que quepan en maxWidth a un tamaño de fuente dado.
-function wrapLines(font, text, maxWidth, size) {
+// firstLineWidth (opcional): ancho disponible SOLO para la primera línea, cuando esta
+// arranca más a la derecha que las siguientes (ver drawTextBox con firstLineX/
+// firstLineWidth) — ej. un valor que empieza junto a una nota impresa y las líneas
+// siguientes usan el ancho completo de la celda, ya sin esa nota de por medio.
+function wrapLines(font, text, maxWidth, size, firstLineWidth = maxWidth) {
   const words = String(text).split(/\s+/).filter(Boolean);
   const lines = [];
   let current = '';
+  const widthLimit = () => (lines.length === 0 ? firstLineWidth : maxWidth);
   for (const word of words) {
     const attempt = current ? `${current} ${word}` : word;
-    if (widthOf(font, attempt, size) <= maxWidth) {
+    if (widthOf(font, attempt, size) <= widthLimit()) {
       current = attempt;
     } else {
       if (current) lines.push(current);
-      if (widthOf(font, word, size) > maxWidth) {
+      if (widthOf(font, word, size) > widthLimit()) {
         let piece = '';
         for (const ch of word) {
-          if (widthOf(font, piece + ch, size) <= maxWidth) piece += ch;
+          if (widthOf(font, piece + ch, size) <= widthLimit()) piece += ch;
           else { lines.push(piece); piece = ch; }
         }
         current = piece;
@@ -53,12 +58,17 @@ function wrapLines(font, text, maxWidth, size) {
 // Dibuja un bloque de texto libre dentro de una caja de ancho/alto fijos: intenta con
 // startSize, reduce fuente si el wrap no cabe en maxHeight, y si ni al tamaño mínimo cabe,
 // trunca la última línea visible con "…".
-function drawTextBox(page, font, text, { x, y, maxWidth, maxHeight, startSize = 9, minSize = 6.5, lineGap = 1.15, color = rgb(0.15, 0.15, 0.15) }) {
+// firstLineX/firstLineWidth (opcionales, ambos o ninguno): cuando el valor debe arrancar
+// en la MISMA línea que una nota/etiqueta impresa dentro de la celda (después de su ":"),
+// en vez de debajo — la primera línea se dibuja en firstLineX con ancho firstLineWidth: el
+// resto del texto, si no cabe en esa línea, sigue envolviendo debajo a partir de x, con el
+// ancho completo maxWidth (ya sin la nota de por medio).
+function drawTextBox(page, font, text, { x, y, maxWidth, maxHeight, startSize = 9, minSize = 6.5, lineGap = 1.15, color = rgb(0.15, 0.15, 0.15), firstLineX, firstLineWidth }) {
   if (!text) return;
   let size = startSize;
   let lines;
   for (;;) {
-    lines = wrapLines(font, text, maxWidth, size);
+    lines = wrapLines(font, text, maxWidth, size, firstLineWidth);
     const blockHeight = lines.length * size * lineGap;
     if (blockHeight <= maxHeight || size <= minSize) break;
     size -= 0.5;
@@ -67,13 +77,15 @@ function drawTextBox(page, font, text, { x, y, maxWidth, maxHeight, startSize = 
   if (lines.length > maxLines) {
     lines = lines.slice(0, maxLines);
     const last = lines[maxLines - 1];
-    lines[maxLines - 1] = fitSingleLine(font, last + '…', maxWidth, { startSize: size, minSize: size }).text;
+    const lastLimit = (maxLines === 1 && firstLineWidth !== undefined) ? firstLineWidth : maxWidth;
+    lines[maxLines - 1] = fitSingleLine(font, last + '…', lastLimit, { startSize: size, minSize: size }).text;
   }
   let cursorY = y;
-  for (const line of lines) {
-    page.drawText(line, { x, y: cursorY, size, font, color });
+  lines.forEach((line, i) => {
+    const lineX = (i === 0 && firstLineX !== undefined) ? firstLineX : x;
+    page.drawText(line, { x: lineX, y: cursorY, size, font, color });
     cursorY -= size * lineGap;
-  }
+  });
 }
 
 function drawFit(page, font, text, { x, y, maxWidth, startSize = 9, minSize = 6, color = rgb(0.15, 0.15, 0.15) }) {

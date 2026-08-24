@@ -4,6 +4,27 @@ const candidatoFormularioService = require('../services/candidatoFormulario.serv
 const firmacloudDispatchService = require('../services/firmacloudDispatchService');
 const { v4: uuidv4 } = require('uuid');
 const { separarNombreCompleto } = require('../utils/nombreCompleto.util');
+const fs = require('fs');
+const path = require('path');
+
+const ANTECEDENTES_DIR = path.join(__dirname, '..', 'uploads', 'antecedentes');
+const EXTENSIONES_CONTENT_TYPE = {
+  '.pdf': 'application/pdf',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png'
+};
+
+// Una entrada por cada una de las 4 verificaciones de antecedentes (ADRES/POL/COMP/PROCU) —
+// cada una tiene su propio documento independiente (a diferencia del diseño original de esta
+// sesión, que compartía un solo documento entre las 4). `campoArchivo` es el nombre del campo
+// multipart que usa multer (`uploadAntecedentes.fields(...)` en las rutas).
+const CAMPOS_ANTECEDENTES = [
+  { key: 'adres', campoEstado: 'antecedentes_adres', campoNovedad: 'antecedentes_adres_novedad', campoDocumento: 'antecedentes_adres_documento', campoDocumentoNombre: 'antecedentes_adres_documento_nombre', campoArchivo: 'documento_adres' },
+  { key: 'pol', campoEstado: 'antecedentes_pol', campoNovedad: 'antecedentes_pol_novedad', campoDocumento: 'antecedentes_pol_documento', campoDocumentoNombre: 'antecedentes_pol_documento_nombre', campoArchivo: 'documento_pol' },
+  { key: 'comp', campoEstado: 'antecedentes_comp', campoNovedad: 'antecedentes_comp_novedad', campoDocumento: 'antecedentes_comp_documento', campoDocumentoNombre: 'antecedentes_comp_documento_nombre', campoArchivo: 'documento_comp' },
+  { key: 'procu', campoEstado: 'antecedentes_procu', campoNovedad: 'antecedentes_procu_novedad', campoDocumento: 'antecedentes_procu_documento', campoDocumentoNombre: 'antecedentes_procu_documento_nombre', campoArchivo: 'documento_procu' }
+];
 
 // Traduce los errores de la capa de servicio del formulario (HttpError con status propio)
 // a la respuesta HTTP; cualquier otro error (DB, inesperado) se sanitiza para no filtrar
@@ -78,7 +99,7 @@ class CandidatoController {
 
       const columnas = `
         id, primer_nombre, primer_apellido, email_personal, numero_celular,
-        cliente, cargo, oleada, fecha_citacion_entrevista, estado, reclutador_id,
+        cliente, cargo, fecha_citacion_entrevista, estado, reclutador_id,
         formulario_hoja_vida_completado, formulario_datos_basicos_completado,
         formulario_estudios_completado, formulario_experiencia_completado,
         formulario_personal_completado, formulario_consentimiento_completado,
@@ -263,6 +284,149 @@ class CandidatoController {
       res.send(buffer);
     } catch (error) {
       manejarErrorFormulario(res, error);
+    }
+  }
+
+  // Registra el resultado de las 4 verificaciones de antecedentes (ADRES/POL/COMP/PROCU, bloque
+  // "ANTECEDENTES" del Excel oficial) y, opcionalmente, el documento de soporte de cada una (PDF
+  // o imagen, campos "documento_adres"/"documento_pol"/"documento_comp"/"documento_procu" del
+  // multipart — cada verificación tiene su propio archivo, no uno compartido) - solo aplica una
+  // vez el candidato asistió a la entrevista (validado en el frontend, ver PerfilCandidato.jsx).
+  // Cada verificación se guarda de forma independiente y auto-guardada apenas el reclutador
+  // decide algo (2026-08-21): elegir "Aprobado" guarda el estado solo; elegir "No aprobado" exige
+  // el texto de la novedad (campo "{key}_novedad") explicando por qué; soltar/seleccionar un
+  // archivo lo guarda por separado, sin tocar el estado. `verificarPermiso('editar_candidatos')`
+  // ya cubre reclutador/seleccion/admin; `construirWhereDueno` limita reclutador a sus propios
+  // candidatos.
+  async actualizarAntecedentes(req, res) {
+    const archivosSubidos = req.files || {};
+    const archivosSubidosFlat = Object.values(archivosSubidos).flat();
+    const borrarArchivosSubidos = () => archivosSubidosFlat.forEach((f) => fs.unlink(f.path, () => {}));
+
+    try {
+      const sets = ['updated_at = NOW()'];
+      const setParams = [];
+
+      for (const { key, campoEstado, campoNovedad, campoDocumento, campoDocumentoNombre, campoArchivo } of CAMPOS_ANTECEDENTES) {
+        const estado = req.body[key];
+        const novedad = req.body[`${key}_novedad`];
+        const archivo = archivosSubidos[campoArchivo]?.[0];
+
+        if (estado !== undefined && estado !== '') {
+          if (!['aprobado', 'no_aprobado'].includes(estado)) {
+            borrarArchivosSubidos();
+            return res.status(400).json({ error: `Valor inválido para "${key}": debe ser "aprobado" o "no_aprobado"` });
+          }
+          if (estado === 'no_aprobado' && !(novedad || '').trim()) {
+            borrarArchivosSubidos();
+            return res.status(400).json({ error: `Debes escribir la novedad de "${key}" para marcarlo como no aprobado` });
+          }
+          sets.push(`${campoEstado} = ?`, `${campoNovedad} = ?`);
+          setParams.push(estado, estado === 'no_aprobado' ? novedad.trim() : null);
+        }
+
+        if (archivo) {
+          sets.push(`${campoDocumento} = ?`, `${campoDocumentoNombre} = ?`);
+          setParams.push(archivo.filename, archivo.originalname);
+        }
+      }
+
+      if (setParams.length === 0) {
+        return res.status(400).json({ error: 'No se envió ningún cambio' });
+      }
+      sets.push('fecha_antecedentes = NOW()');
+
+      const { whereClause, params } = construirWhereDueno(req);
+
+      const finalizarUpdate = (documentosAnteriores) => {
+        const query = `UPDATE hyd_candidatos SET ${sets.join(', ')} WHERE ${whereClause}`;
+        global.db.query(query, [...setParams, ...params], (err, results) => {
+          if (err) {
+            console.error('Error actualizando antecedentes:', err);
+            borrarArchivosSubidos();
+            return res.status(500).json({ error: 'Error actualizando antecedentes' });
+          }
+          if (results.affectedRows === 0) {
+            borrarArchivosSubidos();
+            return res.status(404).json({ error: 'Candidato no encontrado o no tienes acceso' });
+          }
+          // Borra del disco solo los documentos que efectivamente se reemplazaron en esta
+          // petición, después de confirmar el UPDATE, para no dejar huérfano un archivo previo
+          // si algo falla antes.
+          CAMPOS_ANTECEDENTES.forEach(({ campoArchivo, campoDocumento }) => {
+            const anterior = documentosAnteriores?.[campoDocumento];
+            if (archivosSubidos[campoArchivo]?.[0] && anterior) {
+              fs.unlink(path.join(ANTECEDENTES_DIR, anterior), () => {});
+            }
+          });
+          res.json({ message: 'Antecedentes actualizados correctamente' });
+        });
+      };
+
+      if (archivosSubidosFlat.length > 0) {
+        const columnasDocumento = CAMPOS_ANTECEDENTES.map((c) => c.campoDocumento).join(', ');
+        global.db.query(`SELECT ${columnasDocumento} FROM hyd_candidatos WHERE ${whereClause}`, params, (err, rows) => {
+          if (err) {
+            console.error('Error consultando documentos anteriores de antecedentes:', err);
+            borrarArchivosSubidos();
+            return res.status(500).json({ error: 'Error de base de datos' });
+          }
+          finalizarUpdate(rows[0] || null);
+        });
+      } else {
+        finalizarUpdate(null);
+      }
+    } catch (error) {
+      borrarArchivosSubidos();
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  // Descarga (proxy) el documento de antecedentes de una verificación puntual — GET
+  // /candidato/antecedentes/:candidatoId/documento/:tipo, tipo = 'adres'|'pol'|'comp'|'procu'. El
+  // archivo vive en disco (uploads/antecedentes/), nunca se expone una ruta pública directa a esa
+  // carpeta.
+  async descargarDocumentoAntecedentes(req, res) {
+    try {
+      const { tipo } = req.params;
+      const campo = CAMPOS_ANTECEDENTES.find((c) => c.key === tipo);
+      if (!campo) {
+        return res.status(400).json({ error: 'Tipo de antecedente inválido' });
+      }
+
+      const { whereClause, params } = construirWhereDueno(req);
+      global.db.query(
+        `SELECT ${campo.campoDocumento} AS documento, ${campo.campoDocumentoNombre} AS documento_nombre FROM hyd_candidatos WHERE ${whereClause}`,
+        params,
+        (err, rows) => {
+          if (err) {
+            console.error('Error consultando documento de antecedentes:', err);
+            return res.status(500).json({ error: 'Error de base de datos' });
+          }
+          if (rows.length === 0) {
+            return res.status(404).json({ error: 'Candidato no encontrado o no tienes acceso' });
+          }
+          const { documento, documento_nombre } = rows[0];
+          if (!documento) {
+            return res.status(404).json({ error: 'Este candidato no tiene documento cargado para esta verificación' });
+          }
+
+          const filePath = path.join(ANTECEDENTES_DIR, documento);
+          const contentType = EXTENSIONES_CONTENT_TYPE[path.extname(documento).toLowerCase()] || 'application/octet-stream';
+
+          fs.readFile(filePath, (readErr, buffer) => {
+            if (readErr) {
+              console.error('Error leyendo documento de antecedentes:', readErr);
+              return res.status(404).json({ error: 'No se pudo encontrar el archivo' });
+            }
+            res.setHeader('Content-Type', contentType);
+            res.setHeader('Content-Disposition', `inline; filename="${documento_nombre || documento}"`);
+            res.send(buffer);
+          });
+        }
+      );
+    } catch (error) {
+      res.status(500).json({ error: error.message });
     }
   }
 
@@ -582,7 +746,7 @@ class CandidatoController {
       const {
         nombre_completo, email_personal, numero_celular,
         tipo_documento, numero_documento, edad, cliente, cargo,
-        oleada, ciudad, fecha_citacion_entrevista, fuente_reclutamiento,
+        ciudad, fecha_citacion_entrevista, fuente_reclutamiento,
         contacto_llamada, contacto_whatsapp,
         observaciones_llamada, observaciones_generales, estado
       } = req.body;
@@ -644,11 +808,11 @@ class CandidatoController {
           INSERT INTO hyd_candidatos (
             primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, email_personal, numero_celular,
             nacionalidad, tipo_documento, numero_documento, edad, cliente, cargo,
-            oleada, ciudad, fecha_citacion_entrevista, fuente_reclutamiento,
+            ciudad, fecha_citacion_entrevista, fuente_reclutamiento,
             contacto_llamada, contacto_whatsapp,
             observaciones_llamada, observaciones_generales, token_acceso, fecha_vencimiento_token,
             estado, reclutador_id, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
         `;
 
         console.log('Creando candidato para reclutador ID:', reclutadorId);
@@ -656,7 +820,7 @@ class CandidatoController {
         global.db.query(query, [
           primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular,
           nacionalidad, tipo_documento, numero_documento || null, edad || null, cliente, cargo,
-          oleada || null, ciudad || null, fecha_citacion_entrevista || null,
+          ciudad || null, fecha_citacion_entrevista || null,
           fuente_reclutamiento || null, contacto_llamada || null, contacto_whatsapp || null,
           observaciones_llamada || null, observaciones_generales || null,
           token, fechaVencimiento, estado || 'nuevo', reclutadorId
@@ -696,7 +860,7 @@ class CandidatoController {
       const {
         nombre_completo, email_personal, numero_celular,
         tipo_documento, numero_documento, cliente, cargo,
-        oleada, ciudad, fuente_reclutamiento,
+        ciudad, fuente_reclutamiento,
         observaciones_llamada, observaciones_generales, estado
       } = req.body;
 
@@ -772,18 +936,18 @@ class CandidatoController {
           // incluyera en este UPDATE, cada edición del candidato borraría la cita ya agendada.
           if (estado !== undefined && estado !== null && estado !== '') {
             query = esAdmin
-              ? `UPDATE hyd_candidatos SET primer_nombre = ?, segundo_nombre = ?, primer_apellido = ?, segundo_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, oleada = ?, ciudad = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, estado = ?, updated_at = NOW() WHERE id = ?`
-              : `UPDATE hyd_candidatos SET primer_nombre = ?, segundo_nombre = ?, primer_apellido = ?, segundo_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, oleada = ?, ciudad = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, estado = ?, updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
+              ? `UPDATE hyd_candidatos SET primer_nombre = ?, segundo_nombre = ?, primer_apellido = ?, segundo_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, ciudad = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, estado = ?, updated_at = NOW() WHERE id = ?`
+              : `UPDATE hyd_candidatos SET primer_nombre = ?, segundo_nombre = ?, primer_apellido = ?, segundo_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, ciudad = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, estado = ?, updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
             queryParams = esAdmin
-              ? [primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, oleada || null, ciudad || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, estado, candidatoId]
-              : [primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, oleada || null, ciudad || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, estado, candidatoId, reclutadorId];
+              ? [primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, ciudad || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, estado, candidatoId]
+              : [primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, ciudad || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, estado, candidatoId, reclutadorId];
           } else {
             query = esAdmin
-              ? `UPDATE hyd_candidatos SET primer_nombre = ?, segundo_nombre = ?, primer_apellido = ?, segundo_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, oleada = ?, ciudad = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, updated_at = NOW() WHERE id = ?`
-              : `UPDATE hyd_candidatos SET primer_nombre = ?, segundo_nombre = ?, primer_apellido = ?, segundo_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, oleada = ?, ciudad = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
+              ? `UPDATE hyd_candidatos SET primer_nombre = ?, segundo_nombre = ?, primer_apellido = ?, segundo_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, ciudad = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, updated_at = NOW() WHERE id = ?`
+              : `UPDATE hyd_candidatos SET primer_nombre = ?, segundo_nombre = ?, primer_apellido = ?, segundo_apellido = ?, email_personal = ?, numero_celular = ?, nacionalidad = ?, tipo_documento = ?, numero_documento = ?, cliente = ?, cargo = ?, ciudad = ?, fuente_reclutamiento = ?, observaciones_llamada = ?, observaciones_generales = ?, updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
             queryParams = esAdmin
-              ? [primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, oleada || null, ciudad || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, candidatoId]
-              : [primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, oleada || null, ciudad || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, candidatoId, reclutadorId];
+              ? [primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, ciudad || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, candidatoId]
+              : [primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, email_personal || `temp_${Date.now()}@noviembrehidra.com`, numero_celular, nacionalidad, tipo_documento, numero_documento || null, cliente, cargo, ciudad || null, fuente_reclutamiento || null, observaciones_llamada || null, observaciones_generales || null, candidatoId, reclutadorId];
           }
 
           global.db.query(query, queryParams, (err, results) => {
@@ -808,6 +972,14 @@ class CandidatoController {
     }
   }
 
+  // Único endpoint que escribe fecha_citacion_entrevista (ver nota en editarCandidato). Antes
+  // solo tocaba la fecha y dejaba el cambio de estado a "citado" como una acción manual aparte
+  // (botón "Marcar como Citado") — eso permitía quedar con estado='citado' sin fecha real si
+  // alguien usaba ese botón sin pasar por acá (bug real encontrado 2026-08-21). Ahora, agendar
+  // la fecha desde un estado temprano del embudo también avanza el estado a "citado" en la misma
+  // operación, para que nunca quede desincronizado. No downgradea un estado ya más avanzado
+  // (entrevistado/aprobado/etc.) si solo se está reprogramando la fecha de un candidato que ya
+  // pasó por ahí.
   async actualizarFechaEntrevista(req, res) {
     try {
       const { candidatoId } = req.params;
@@ -815,8 +987,11 @@ class CandidatoController {
       const reclutadorId = req.usuario.id;
 
       const query = `
-        UPDATE hyd_candidatos 
-        SET fecha_citacion_entrevista = ?, updated_at = NOW()
+        UPDATE hyd_candidatos
+        SET
+          fecha_citacion_entrevista = ?,
+          estado = CASE WHEN estado IN ('nuevo', 'contacto_exitoso', 'formularios_completados') THEN 'citado' ELSE estado END,
+          updated_at = NOW()
         WHERE id = ? AND reclutador_id = ?
       `;
 
@@ -833,6 +1008,46 @@ class CandidatoController {
         res.json({
           message: 'Fecha de entrevista actualizada exitosamente'
         });
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  // Alternativa a "Marcar como Citado" (actualizarFechaEntrevista): el reclutador decide NO
+  // citar al candidato y deja registrado el motivo. Pasa a estado 'rechazado' (mismo bucket
+  // final que ya usa el resto del embudo) en la misma operación que guarda el motivo.
+  async marcarNoCitado(req, res) {
+    try {
+      const { candidatoId } = req.params;
+      const { motivo } = req.body;
+      const reclutadorId = req.usuario.id;
+
+      const motivoLimpio = (motivo || '').trim();
+      if (!motivoLimpio) {
+        return res.status(400).json({ error: 'El motivo es requerido' });
+      }
+
+      const rol = req.usuario.rol;
+      const esAdmin = rol === 'administrador' || rol === 'seleccion';
+      const query = esAdmin
+        ? `UPDATE hyd_candidatos SET estado = 'rechazado', motivo_no_citado = ?, updated_at = NOW() WHERE id = ?`
+        : `UPDATE hyd_candidatos SET estado = 'rechazado', motivo_no_citado = ?, updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
+      const queryParams = esAdmin
+        ? [motivoLimpio, candidatoId]
+        : [motivoLimpio, candidatoId, reclutadorId];
+
+      global.db.query(query, queryParams, (err, results) => {
+        if (err) {
+          console.error('Error marcando no citado:', err);
+          return res.status(500).json({ error: 'Error al marcar como no citado' });
+        }
+
+        if (results.affectedRows === 0) {
+          return res.status(404).json({ error: 'Candidato no encontrado o no tienes acceso' });
+        }
+
+        res.json({ message: 'Candidato marcado como no citado' });
       });
     } catch (error) {
       res.status(500).json({ error: error.message });

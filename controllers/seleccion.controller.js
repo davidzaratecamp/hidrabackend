@@ -14,38 +14,91 @@ function queryAsync(sql, params = []) {
 
 class SeleccionController {
   
-  // Obtener candidatos en proceso de selección
-  // Los psicólogos ven todos los candidatos que están en proceso de selección
+  // Obtener candidatos en proceso de selección (pantalla "Candidatos" de Selección,
+  // CandidatosSeleccion.jsx). Paginado 20 en 20 (2026-08-21) - antes traía todos los citados sin
+  // límite (1984 filas en local); solo lo consume esta pantalla (CandidatosTotal.jsx, la vista de
+  // solo lectura del reclutador, tiene su propio endpoint dedicado, getCandidatosTotal, desde
+  // 2026-08-19).
+  // Orden (corregido 2026-08-21, segunda vuelta): el intento inicial ordenaba por
+  // fecha_citacion_entrevista ASC ("cita más antigua primero", pensado para priorizar casos
+  // atrasados) - en la práctica eso subía a la cima filas viejas con fecha_citacion_entrevista
+  // basura (ej. "2001-01-01", remanente de datos corruptos/importación defectuosa, ver
+  // claude/context.md) y enterraba candidatos recién citados de verdad. El usuario confirmó que
+  // quiere lo contrario: citados más recientes primero. Se mantiene la prioridad de evaluación
+  // pendiente de decisión (sigue siendo un caso distinto y no cuestionado), pero dentro de cada
+  // grupo ahora ordena por fecha_citacion_entrevista DESC.
   async getCandidatosCitados(req, res) {
     try {
-      const query = `
-        SELECT 
-          c.*,
-          u.nombre_completo as nombre_reclutador,
-          up.nombre_completo as nombre_psicologo_decision,
-          o.numero_oleada,
-          o.descripcion as descripcion_oleada
+      const limit = 20;
+      const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+      const offset = (page - 1) * limit;
+
+      const search = (req.query.search || '').trim();
+      const searchParam = search ? `%${search.replace(/[\\%_]/g, '\\$&')}%` : null;
+
+      const condiciones = [];
+      const params = [];
+
+      if (search) {
+        condiciones.push('(c.primer_nombre LIKE ? OR c.primer_apellido LIKE ? OR c.email_personal LIKE ? OR c.numero_celular LIKE ?)');
+        params.push(searchParam, searchParam, searchParam, searchParam);
+      }
+      if (req.query.operacion) {
+        condiciones.push('c.cliente = ?');
+        params.push(req.query.operacion);
+      }
+      if (req.query.asistencia) {
+        condiciones.push('c.asistio_citacion = ?');
+        params.push(req.query.asistencia);
+      }
+      if (req.query.estado) {
+        condiciones.push('c.estado = ?');
+        params.push(req.query.estado);
+      }
+
+      const whereExtra = condiciones.length ? ` AND ${condiciones.join(' AND ')}` : '';
+      const baseFrom = `
         FROM hyd_candidatos c
         LEFT JOIN hyd_usuarios u ON c.reclutador_id = u.id
         LEFT JOIN hyd_usuarios up ON c.psicologo_decision_id = up.id
-        LEFT JOIN hyd_oleadas o ON c.oleada_seleccion_id = o.id
-        WHERE c.fecha_citacion_entrevista IS NOT NULL
-        ORDER BY 
-          CASE 
-            WHEN c.evaluacion_total IS NOT NULL AND c.aprobacion_final IS NULL THEN 1
-            ELSE 2 
-          END,
-          c.fecha_citacion_entrevista ASC, 
-          c.created_at ASC
+        WHERE c.fecha_citacion_entrevista IS NOT NULL${whereExtra}
       `;
-      
-      global.db.query(query, (err, results) => {
-        if (err) {
-          console.error('Error obteniendo candidatos citados:', err);
-          return res.status(500).json({ error: 'Error de base de datos' });
+
+      // El dropdown de "Operación" se calcula sobre TODOS los citados (sin aplicar los demás
+      // filtros activos) - mismo comportamiento que tenía getOperacionesUnicas() client-side,
+      // que leía del array completo, no del ya filtrado.
+      const [countResults, results, operaciones] = await Promise.all([
+        queryAsync(`SELECT COUNT(*) as total ${baseFrom}`, params),
+        queryAsync(
+          `SELECT
+            c.*,
+            u.nombre_completo as nombre_reclutador,
+            up.nombre_completo as nombre_psicologo_decision
+          ${baseFrom}
+          ORDER BY
+            CASE WHEN c.evaluacion_total IS NOT NULL AND c.aprobacion_final IS NULL THEN 1 ELSE 2 END,
+            c.fecha_citacion_entrevista DESC, c.created_at DESC, c.id DESC
+          LIMIT ? OFFSET ?`,
+          [...params, limit, offset]
+        ),
+        queryAsync(
+          `SELECT DISTINCT cliente FROM hyd_candidatos
+           WHERE fecha_citacion_entrevista IS NOT NULL AND cliente IS NOT NULL
+           ORDER BY cliente`
+        )
+      ]);
+
+      res.json({
+        candidatos: results,
+        pagination: {
+          page,
+          limit,
+          total: countResults[0].total,
+          totalPages: Math.max(Math.ceil(countResults[0].total / limit), 1)
+        },
+        filtrosDisponibles: {
+          operaciones: operaciones.map((r) => r.cliente)
         }
-        
-        res.json({ candidatos: results });
       });
     } catch (error) {
       console.error('Error en getCandidatosCitados:', error);
@@ -57,12 +110,16 @@ class SeleccionController {
   async marcarAsistencia(req, res) {
     try {
       const { candidatoId } = req.params;
-      const { asistio, observaciones } = req.body;
-      
+      const { asistio, observaciones, motivoInasistencia } = req.body;
+
       if (!['asistio', 'no_asistio'].includes(asistio)) {
         return res.status(400).json({ error: 'Valor de asistencia inválido' });
       }
-      
+
+      if (asistio === 'no_asistio' && !motivoInasistencia) {
+        return res.status(400).json({ error: 'El motivo de inasistencia es requerido' });
+      }
+
       // Determinar el nuevo estado
       let nuevoEstado = 'citado'; // Por defecto mantiene citado
       if (asistio === 'no_asistio') {
@@ -70,199 +127,41 @@ class SeleccionController {
       } else if (asistio === 'asistio') {
         nuevoEstado = 'entrevistado'; // Si asistió, pasa a entrevistado
       }
-      
+
       const query = `
-        UPDATE hyd_candidatos 
-        SET 
+        UPDATE hyd_candidatos
+        SET
           asistio_citacion = ?,
+          motivo_inasistencia = ?,
           fecha_asistencia = NOW(),
           observaciones_seleccion = ?,
           estado = ?,
           updated_at = NOW()
         WHERE id = ?
       `;
-      
-      global.db.query(query, [asistio, observaciones || null, nuevoEstado, candidatoId], (err, results) => {
-        if (err) {
-          console.error('Error marcando asistencia:', err);
-          return res.status(500).json({ error: 'Error de base de datos' });
-        }
-        
-        if (results.affectedRows === 0) {
-          return res.status(404).json({ error: 'Candidato no encontrado' });
-        }
-        
-        res.json({ 
-          message: 'Asistencia marcada correctamente',
-          asistencia: asistio,
-          nuevo_estado: nuevoEstado
-        });
-      });
-    } catch (error) {
-      console.error('Error en marcarAsistencia:', error);
-      res.status(500).json({ error: error.message });
-    }
-  }
 
-  // Asignar candidato a oleada
-  async asignarOleada(req, res) {
-    try {
-      const { candidatoId } = req.params;
-      const { numeroOleada } = req.body;
-
-      if (!numeroOleada || numeroOleada < 1) {
-        return res.status(400).json({ error: 'Número de oleada es requerido y debe ser mayor a 0' });
-      }
-
-      // Primero obtener los datos del candidato (cliente y cargo)
-      const getCandidatoQuery = `
-        SELECT id, cliente, cargo FROM hyd_candidatos WHERE id = ?
-      `;
-
-      global.db.query(getCandidatoQuery, [candidatoId], (err, candidatoResults) => {
-        if (err) {
-          console.error('Error obteniendo candidato:', err);
-          return res.status(500).json({ error: 'Error de base de datos' });
-        }
-
-        if (candidatoResults.length === 0) {
-          return res.status(404).json({ error: 'Candidato no encontrado' });
-        }
-
-        const candidato = candidatoResults[0];
-        const operacion = candidato.cliente;
-        const campana = candidato.cargo;
-
-        // Buscar si existe la oleada para esta operación/campaña/número
-        const buscarOleadaQuery = `
-          SELECT * FROM hyd_oleadas
-          WHERE numero_oleada = ? AND operacion = ? AND campana = ? AND activa = TRUE
-        `;
-
-        global.db.query(buscarOleadaQuery, [numeroOleada, operacion, campana], (err, oleadaResults) => {
+      global.db.query(
+        query,
+        [asistio, asistio === 'no_asistio' ? motivoInasistencia : null, observaciones || null, nuevoEstado, candidatoId],
+        (err, results) => {
           if (err) {
-            console.error('Error buscando oleada:', err);
+            console.error('Error marcando asistencia:', err);
             return res.status(500).json({ error: 'Error de base de datos' });
           }
 
-          const asignarOleadaACandidato = (oleadaId, oleadaInfo) => {
-            const updateQuery = `
-              UPDATE hyd_candidatos
-              SET oleada_seleccion_id = ?, updated_at = NOW()
-              WHERE id = ?
-            `;
-
-            global.db.query(updateQuery, [oleadaId, candidatoId], (err, results) => {
-              if (err) {
-                console.error('Error asignando oleada:', err);
-                return res.status(500).json({ error: 'Error de base de datos' });
-              }
-
-              res.json({
-                message: 'Candidato asignado a oleada correctamente',
-                oleada: oleadaInfo
-              });
-            });
-          };
-
-          if (oleadaResults.length > 0) {
-            // La oleada existe, asignarla
-            const oleada = oleadaResults[0];
-            asignarOleadaACandidato(oleada.id, {
-              id: oleada.id,
-              numero: oleada.numero_oleada,
-              operacion: oleada.operacion,
-              campana: oleada.campana
-            });
-          } else {
-            // La oleada no existe, crearla
-            const crearOleadaQuery = `
-              INSERT INTO hyd_oleadas (numero_oleada, operacion, campana, descripcion, activa)
-              VALUES (?, ?, ?, ?, TRUE)
-            `;
-            const descripcion = `Oleada ${numeroOleada} - ${operacion} - ${campana}`;
-
-            global.db.query(crearOleadaQuery, [numeroOleada, operacion, campana, descripcion], (err, insertResult) => {
-              if (err) {
-                console.error('Error creando oleada:', err);
-                return res.status(500).json({ error: 'Error al crear la oleada' });
-              }
-
-              asignarOleadaACandidato(insertResult.insertId, {
-                id: insertResult.insertId,
-                numero: numeroOleada,
-                operacion: operacion,
-                campana: campana
-              });
-            });
+          if (results.affectedRows === 0) {
+            return res.status(404).json({ error: 'Candidato no encontrado' });
           }
-        });
-      });
-    } catch (error) {
-      console.error('Error en asignarOleada:', error);
-      res.status(500).json({ error: error.message });
-    }
-  }
 
-  // Obtener oleadas disponibles
-  async getOleadas(req, res) {
-    try {
-      const query = `
-        SELECT * FROM hyd_oleadas 
-        WHERE activa = TRUE 
-        ORDER BY operacion, campana, numero_oleada
-      `;
-      
-      global.db.query(query, (err, results) => {
-        if (err) {
-          console.error('Error obteniendo oleadas:', err);
-          return res.status(500).json({ error: 'Error de base de datos' });
+          res.json({
+            message: 'Asistencia marcada correctamente',
+            asistencia: asistio,
+            nuevo_estado: nuevoEstado
+          });
         }
-        
-        res.json({ oleadas: results });
-      });
+      );
     } catch (error) {
-      console.error('Error en getOleadas:', error);
-      res.status(500).json({ error: error.message });
-    }
-  }
-
-  // Crear nueva oleada
-  async crearOleada(req, res) {
-    try {
-      const { numero_oleada, operacion, campana, descripcion, fecha_inicio, fecha_fin } = req.body;
-      
-      if (!numero_oleada || !operacion || !campana) {
-        return res.status(400).json({ error: 'Número de oleada, operación y campaña son requeridos' });
-      }
-      
-      const query = `
-        INSERT INTO hyd_oleadas (numero_oleada, operacion, campana, descripcion, fecha_inicio, fecha_fin)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `;
-      
-      global.db.query(query, [numero_oleada, operacion, campana, descripcion || null, fecha_inicio || null, fecha_fin || null], (err, results) => {
-        if (err) {
-          if (err.code === 'ER_DUP_ENTRY') {
-            return res.status(400).json({ error: 'Ya existe una oleada con ese número para la misma operación y campaña' });
-          }
-          console.error('Error creando oleada:', err);
-          return res.status(500).json({ error: 'Error de base de datos' });
-        }
-        
-        res.status(201).json({ 
-          message: 'Oleada creada correctamente',
-          oleada: {
-            id: results.insertId,
-            numero_oleada,
-            operacion,
-            campana,
-            descripcion
-          }
-        });
-      });
-    } catch (error) {
-      console.error('Error en crearOleada:', error);
+      console.error('Error en marcarAsistencia:', error);
       res.status(500).json({ error: error.message });
     }
   }
@@ -347,159 +246,6 @@ class SeleccionController {
       });
     } catch (error) {
       console.error('Error en actualizarOperacionCampana:', error);
-      res.status(500).json({ error: error.message });
-    }
-  }
-
-  // Obtener oleada actual para una operación y campaña específica
-  async getOleadaActual(req, res) {
-    try {
-      const { operacion, campana } = req.params;
-      
-      if (!operacion || !campana) {
-        return res.status(400).json({ error: 'Operación y campaña son requeridos' });
-      }
-      
-      const query = `
-        SELECT MAX(numero_oleada) as oleada_actual
-        FROM hyd_oleadas 
-        WHERE operacion = ? AND campana = ? AND activa = TRUE
-      `;
-      
-      global.db.query(query, [operacion, campana], (err, results) => {
-        if (err) {
-          console.error('Error obteniendo oleada actual:', err);
-          return res.status(500).json({ error: 'Error de base de datos' });
-        }
-        
-        const oleadaActual = results[0]?.oleada_actual || 0;
-        
-        res.json({ 
-          oleada_actual: oleadaActual,
-          operacion,
-          campana
-        });
-      });
-    } catch (error) {
-      console.error('Error en getOleadaActual:', error);
-      res.status(500).json({ error: error.message });
-    }
-  }
-
-  // Obtener oleadas disponibles para asignación (actual y futuras)
-  async getOleadasDisponibles(req, res) {
-    try {
-      const { operacion, campana } = req.params;
-      
-      if (!operacion || !campana) {
-        return res.status(400).json({ error: 'Operación y campaña son requeridos' });
-      }
-      
-      // Primero obtener la oleada actual
-      const oleadaActualQuery = `
-        SELECT MAX(numero_oleada) as oleada_actual
-        FROM hyd_oleadas 
-        WHERE operacion = ? AND campana = ? AND activa = TRUE
-      `;
-      
-      global.db.query(oleadaActualQuery, [operacion, campana], (err, oleadaResults) => {
-        if (err) {
-          console.error('Error obteniendo oleada actual:', err);
-          return res.status(500).json({ error: 'Error de base de datos' });
-        }
-        
-        const oleadaActual = oleadaResults[0]?.oleada_actual || 0;
-        
-        // Obtener oleadas disponibles (actual y futuras)
-        const query = `
-          SELECT * FROM hyd_oleadas 
-          WHERE operacion = ? AND campana = ? AND numero_oleada >= ? AND activa = TRUE
-          ORDER BY numero_oleada ASC
-        `;
-        
-        global.db.query(query, [operacion, campana, oleadaActual], (err, results) => {
-          if (err) {
-            console.error('Error obteniendo oleadas disponibles:', err);
-            return res.status(500).json({ error: 'Error de base de datos' });
-          }
-          
-          res.json({ 
-            oleadas_disponibles: results,
-            oleada_actual: oleadaActual,
-            operacion,
-            campana
-          });
-        });
-      });
-    } catch (error) {
-      console.error('Error en getOleadasDisponibles:', error);
-      res.status(500).json({ error: error.message });
-    }
-  }
-
-  // Inicializar sistema de oleadas (crear oleada 1 para todas las operaciones activas)
-  async inicializarOleadas(req, res) {
-    try {
-      // Obtener todas las combinaciones únicas de operación/campaña de candidatos existentes
-      const candidatosQuery = `
-        SELECT DISTINCT cliente as operacion, cargo as campana
-        FROM hyd_candidatos 
-        WHERE cliente IS NOT NULL AND cargo IS NOT NULL
-        ORDER BY cliente, cargo
-      `;
-      
-      global.db.query(candidatosQuery, (err, combinaciones) => {
-        if (err) {
-          console.error('Error obteniendo combinaciones:', err);
-          return res.status(500).json({ error: 'Error de base de datos' });
-        }
-        
-        let oleadasCreadas = 0;
-        let promesas = [];
-        
-        combinaciones.forEach(combo => {
-          const promesa = new Promise((resolve) => {
-            // Verificar si ya existe oleada 1 para esta combinación
-            const existeQuery = `
-              SELECT id FROM hyd_oleadas 
-              WHERE operacion = ? AND campana = ? AND numero_oleada = 1
-            `;
-            
-            global.db.query(existeQuery, [combo.operacion, combo.campana], (err, existe) => {
-              if (err || existe.length > 0) {
-                return resolve(false); // Ya existe o error
-              }
-              
-              // Crear oleada 1
-              const crearQuery = `
-                INSERT INTO hyd_oleadas (numero_oleada, operacion, campana, descripcion)
-                VALUES (1, ?, ?, ?)
-              `;
-              
-              const descripcion = `Oleada inicial para ${combo.operacion} - ${combo.campana}`;
-              
-              global.db.query(crearQuery, [combo.operacion, combo.campana, descripcion], (err) => {
-                if (!err) {
-                  oleadasCreadas++;
-                }
-                resolve(!err);
-              });
-            });
-          });
-          
-          promesas.push(promesa);
-        });
-        
-        Promise.all(promesas).then(() => {
-          res.json({
-            message: 'Sistema de oleadas inicializado',
-            oleadas_creadas: oleadasCreadas,
-            combinaciones_procesadas: combinaciones.length
-          });
-        });
-      });
-    } catch (error) {
-      console.error('Error en inicializarOleadas:', error);
       res.status(500).json({ error: error.message });
     }
   }
@@ -603,14 +349,11 @@ class SeleccionController {
         SELECT 
           c.*,
           u.nombre_completo as nombre_reclutador,
-          up.nombre_completo as nombre_psicologo_decision,
-          o.numero_oleada,
-          o.descripcion as descripcion_oleada
+          up.nombre_completo as nombre_psicologo_decision
         FROM hyd_candidatos c
         LEFT JOIN hyd_usuarios u ON c.reclutador_id = u.id
         LEFT JOIN hyd_usuarios up ON c.psicologo_decision_id = up.id
-        LEFT JOIN hyd_oleadas o ON c.oleada_seleccion_id = o.id
-        WHERE c.estado = 'aprobado_final' 
+        WHERE c.estado = 'aprobado_final'
           AND c.aprobacion_final = TRUE
         ORDER BY c.fecha_aprobacion_final DESC, c.evaluacion_total DESC
       `;
@@ -823,14 +566,11 @@ class SeleccionController {
         SELECT 
           c.*,
           u.nombre_completo as nombre_reclutador,
-          up.nombre_completo as nombre_psicologo_decision,
-          o.numero_oleada,
-          o.descripcion as descripcion_oleada
+          up.nombre_completo as nombre_psicologo_decision
         FROM hyd_candidatos c
         LEFT JOIN hyd_usuarios u ON c.reclutador_id = u.id
         LEFT JOIN hyd_usuarios up ON c.psicologo_decision_id = up.id
-        LEFT JOIN hyd_oleadas o ON c.oleada_seleccion_id = o.id
-        WHERE c.estado = 'rechazado_final' 
+        WHERE c.estado = 'rechazado_final'
           AND c.aprobacion_final = FALSE
         ORDER BY c.fecha_aprobacion_final DESC
       `;
@@ -896,7 +636,6 @@ class SeleccionController {
         FROM hyd_candidatos c
         LEFT JOIN hyd_usuarios u ON c.reclutador_id = u.id
         LEFT JOIN hyd_usuarios up ON c.psicologo_decision_id = up.id
-        LEFT JOIN hyd_oleadas o ON c.oleada_seleccion_id = o.id
         WHERE c.fecha_citacion_entrevista IS NOT NULL${whereExtra}
       `;
 
@@ -912,8 +651,7 @@ class SeleccionController {
             c.cliente, c.cargo, c.fecha_citacion_entrevista, c.asistio_citacion, c.estado,
             c.evaluacion_total, c.aprobacion_final, c.created_at,
             u.nombre_completo as nombre_reclutador,
-            up.nombre_completo as nombre_psicologo_decision,
-            o.numero_oleada, o.descripcion as descripcion_oleada
+            up.nombre_completo as nombre_psicologo_decision
           ${baseFrom}
           ORDER BY
             CASE WHEN c.evaluacion_total IS NOT NULL AND c.aprobacion_final IS NULL THEN 1 ELSE 2 END,

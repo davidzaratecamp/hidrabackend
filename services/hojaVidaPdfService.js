@@ -41,8 +41,8 @@ const NIVEL_ROWS = {
 async function generarHojaVidaPdf(candidato) {
   const bytes = fs.readFileSync(TEMPLATE_PATH);
   const pdfDoc = await PDFDocument.load(bytes);
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const font = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
 
   const [p1, p2] = pdfDoc.getPages();
 
@@ -129,7 +129,13 @@ async function generarHojaVidaPdf(candidato) {
     drawFit(p1, font, empresaActual.nombre_empresa, { x: 120, y: 301.54, maxWidth: 172 });
     drawFit(p1, font, empresaActual.cargo_desempenado, { x: 382, y: 301.54, maxWidth: 82 });
     drawFit(p1, font, empresaActual.salario, { x: 513, y: 301.54, maxWidth: 78 });
-    drawTextBox(p1, font, empresaActual.funciones, { x: 30, y: 264, maxWidth: 555, maxHeight: 24, startSize: 8, minSize: 6.5 });
+    // FUNCIONES: la celda impresa mide solo 21.6pt de alto (261.4-283.0) y ya la ocupa la
+    // etiqueta "FUNCIONES:" — no hay espacio vertical para envolver a una 2da línea sin
+    // invadir la fila de "Fecha de Inicio/Retiro" de abajo. En cambio el ancho libre después
+    // de la etiqueta (hasta el borde derecho de la celda) es enorme (~510pt), así que se
+    // escribe en la MISMA línea que la etiqueta, como los demás campos con etiqueta+dos
+    // puntos — nunca se desborda verticalmente y da mucha más capacidad real que envolver.
+    drawFit(p1, font, empresaActual.funciones, { x: 73, y: 276, maxWidth: 510, startSize: 8, minSize: 6 });
     drawFit(p1, font, fmtFecha(empresaActual.fecha_inicio), { x: 102, y: 243.45, maxWidth: 88, startSize: 8 });
     drawFit(p1, font, fmtFecha(empresaActual.fecha_retiro), { x: 243, y: 242.3, maxWidth: 93, startSize: 8 });
     // != null (no truthy): 0 es un valor legítimo ("0 años, 3 meses") — con truthy check se
@@ -150,7 +156,8 @@ async function generarHojaVidaPdf(candidato) {
     drawFit(p1, font, empresaAnterior.nombre_empresa, { x: 128, y: 205.2, maxWidth: 160 });
     drawFit(p1, font, empresaAnterior.cargo_desempenado, { x: 386, y: 205.2, maxWidth: 78 });
     drawFit(p1, font, empresaAnterior.salario, { x: 513, y: 205.2, maxWidth: 78 });
-    drawTextBox(p1, font, empresaAnterior.funciones, { x: 30, y: 175, maxWidth: 555, maxHeight: 24, startSize: 8, minSize: 6.5 });
+    // Mismo motivo que FUNCIONES de la empresa actual (ver comentario arriba).
+    drawFit(p1, font, empresaAnterior.funciones, { x: 73, y: 186.2, maxWidth: 510, startSize: 8, minSize: 6 });
   }
 
   // ── INFORMACIÓN REINTEGROS ─────────────────────────────────────────────────
@@ -176,17 +183,40 @@ async function generarHojaVidaPdf(candidato) {
   drawFit(p1, font, candidato.numero_documento, { x: 432, y: 22, maxWidth: 82, startSize: 8 });
 
   // ═══════════════════════ PÁGINA 2 — INFORME DE SELECCIÓN ═══════════════════
-  drawTextBox(p2, font, candidato.genograma, { x: 20, y: 630, maxWidth: 570, maxHeight: 100, startSize: 9, minSize: 7 });
+  // GENOGRAMA: la nota impresa "NOTA: Hace referencia a...núcleo familiar :" termina en
+  // ":" en x=208.9,y=636.1 — el valor arranca ahí mismo, en su misma línea (firstLineX/
+  // firstLineWidth); si no alcanza en esa línea, el resto envuelve debajo a ancho completo
+  // (x=20, maxWidth=570), hasta el borde real de la celda (y=530.8).
+  drawTextBox(p2, font, candidato.genograma, {
+    x: 20, y: 636.1, maxWidth: 570, maxHeight: 105.3, startSize: 9, minSize: 7,
+    firstLineX: 214, firstLineWidth: 376
+  });
 
-  drawTextBox(p2, font, candidato.fortalezas, { x: 20, y: 492, maxWidth: 300, maxHeight: 78, startSize: 8.5, minSize: 6.5 });
+  // FORTALEZAS: nota "Coloque mínimo dos fortalezas:" termina en x=106.7,y=499.2 — mismo
+  // patrón. Borde real de la celda en y=406.9.
+  drawTextBox(p2, font, candidato.fortalezas, {
+    x: 20, y: 499.2, maxWidth: 300, maxHeight: 92.3, startSize: 8.5, minSize: 6.5,
+    firstLineX: 112, firstLineWidth: 208
+  });
+  // ASPECTOS A MEJORAR: su nota ("Coloque al menos un aspecto...") NO termina en ":" — no
+  // es una etiqueta con dos puntos, se mantiene debajo de la línea como estaba.
   drawTextBox(p2, font, candidato.aspectos_mejorar, { x: 345, y: 492, maxWidth: 210, maxHeight: 78, startSize: 8.5, minSize: 6.5 });
 
-  drawTextBox(p2, font, candidato.competencias_laborales, { x: 20, y: 378, maxWidth: 300, maxHeight: 100, startSize: 8.5, minSize: 6.5 });
+  // COMPETENCIAS LABORALES: nota "Coloque mínimo dos Competencias laborales:" termina en
+  // x=147.5,y=383.9 — mismo patrón. Borde real de la celda en y=302.4 (justo encima del
+  // encabezado "Estado de salud actual").
+  drawTextBox(p2, font, candidato.competencias_laborales, {
+    x: 20, y: 383.9, maxWidth: 300, maxHeight: 81.5, startSize: 8.5, minSize: 6.5,
+    firstLineX: 152.5, firstLineWidth: 167.5
+  });
   drawFit(p2, font, candidato.metas_corto_plazo, { x: 400, y: 371.53, maxWidth: 155, startSize: 8 });
   drawFit(p2, font, candidato.metas_mediano_plazo, { x: 415, y: 344.27, maxWidth: 140, startSize: 8 });
   drawFit(p2, font, candidato.metas_largo_plazo, { x: 400, y: 317, maxWidth: 155, startSize: 8 });
 
-  drawTextBox(p2, font, candidato.estado_salud_actual, { x: 20, y: 276, maxWidth: 305, maxHeight: 34, startSize: 8.5, minSize: 6.5 });
+  // maxHeight=17 (antes 34): el borde real de la celda queda en y=257.8, justo encima de
+  // la sección de checkboxes "Marque con un (X) según corresponda"; con 34 se invadía esa
+  // sección cuando el texto ocupaba 2+ líneas.
+  drawTextBox(p2, font, candidato.estado_salud_actual, { x: 20, y: 276, maxWidth: 305, maxHeight: 17, startSize: 8.5, minSize: 6.5 });
   drawFit(p2, fontBold, candidato.autoevaluacion, { x: 505, y: 271.78, maxWidth: 30, startSize: 10 });
 
   marcarSiNo(p2, candidato.experiencia_comercial_certificada, {
