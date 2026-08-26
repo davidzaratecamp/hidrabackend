@@ -97,9 +97,17 @@ class CandidatoController {
         : '';
       const parametrosBusqueda = search ? Array(7).fill(searchParam) : [];
 
+      // El filtro "citado" (tab "Citados" de la tabla de candidatos de reclutamiento) también
+      // incluye a los candidatos marcados "Citado: Sí" en el formulario "Nuevo Candidato"
+      // (citado_gestion = 'si'), aunque su `estado` siga en 'nuevo' hasta que se formalice la
+      // cita real vía "Marcar como Citado" (2026-08-26, ver migración 014).
+      const condicionEstado = estado === 'citado' ? '(estado = ? OR citado_gestion = ?)' : 'estado = ?';
+      const paramsEstadoBase = estado === 'citado' ? [estado, 'si'] : [estado];
+
       const columnas = `
         id, primer_nombre, primer_apellido, email_personal, numero_celular,
         cliente, cargo, fecha_citacion_entrevista, estado, reclutador_id,
+        citado_gestion,
         formulario_hoja_vida_completado, formulario_datos_basicos_completado,
         formulario_estudios_completado, formulario_experiencia_completado,
         formulario_personal_completado, formulario_consentimiento_completado,
@@ -111,29 +119,29 @@ class CandidatoController {
       let countQuery, countParams, dataQuery, dataParams;
 
       if (req.usuario.rol === 'administrador' || req.usuario.rol === 'seleccion') {
-        countQuery = `SELECT COUNT(*) as total FROM hyd_candidatos WHERE estado = ?${filtroBusqueda}`;
-        countParams = [estado, ...parametrosBusqueda];
+        countQuery = `SELECT COUNT(*) as total FROM hyd_candidatos WHERE ${condicionEstado}${filtroBusqueda}`;
+        countParams = [...paramsEstadoBase, ...parametrosBusqueda];
         dataQuery = `
           SELECT ${columnas}
           FROM hyd_candidatos
-          WHERE estado = ?${filtroBusqueda}
+          WHERE ${condicionEstado}${filtroBusqueda}
           ORDER BY updated_at DESC, id DESC
           LIMIT ? OFFSET ?
         `;
-        dataParams = [estado, ...parametrosBusqueda, limit, offset];
+        dataParams = [...paramsEstadoBase, ...parametrosBusqueda, limit, offset];
       } else {
         // Reclutadores solo ven sus candidatos
         const userId = req.usuario.id;
-        countQuery = `SELECT COUNT(*) as total FROM hyd_candidatos WHERE estado = ? AND reclutador_id = ?${filtroBusqueda}`;
-        countParams = [estado, userId, ...parametrosBusqueda];
+        countQuery = `SELECT COUNT(*) as total FROM hyd_candidatos WHERE ${condicionEstado} AND reclutador_id = ?${filtroBusqueda}`;
+        countParams = [...paramsEstadoBase, userId, ...parametrosBusqueda];
         dataQuery = `
           SELECT ${columnas}
           FROM hyd_candidatos
-          WHERE estado = ? AND reclutador_id = ?${filtroBusqueda}
+          WHERE ${condicionEstado} AND reclutador_id = ?${filtroBusqueda}
           ORDER BY updated_at DESC, id DESC
           LIMIT ? OFFSET ?
         `;
-        dataParams = [estado, userId, ...parametrosBusqueda, limit, offset];
+        dataParams = [...paramsEstadoBase, userId, ...parametrosBusqueda, limit, offset];
       }
 
       console.log('Obteniendo candidatos para usuario:', req.usuario.email, 'rol:', req.usuario.rol, 'estado:', estado, 'page:', page, 'search:', search || '(ninguna)');
@@ -197,31 +205,52 @@ class CandidatoController {
       }
       
       console.log('Obteniendo resumen de estados para usuario:', req.usuario.email, 'rol:', req.usuario.rol);
-      
+
       global.db.query(query, queryParams, (err, results) => {
         if (err) {
           return res.status(500).json({ error: 'Error de base de datos' });
         }
-        
-        // Incluir todos los estados visibles en el frontend
+
+        // Incluir todos los estados visibles en el frontend ('nuevo' = tab "Nuevos Candidatos",
+        // 2026-08-26 — antes era el filtro por defecto pero sin badge de conteo visible)
         const estadosVisibles = [
-          'contacto_exitoso', 'formularios_enviados', 'formularios_completados',
-          'citado', 'entrevistado', 'contacto_fallido', 'no_contesta', 'reagendar', 
+          'nuevo', 'contacto_exitoso', 'formularios_enviados', 'formularios_completados',
+          'citado', 'entrevistado', 'contacto_fallido', 'no_contesta', 'reagendar',
           'no_interesado', 'numero_incorrecto', 'no_asistio', 'aprobado', 'rechazado', 'contratado'
         ];
-        
+
         const resumen = {};
         estadosVisibles.forEach(estado => {
           resumen[estado] = 0;
         });
-        
+
         results.forEach(item => {
           if (estadosVisibles.includes(item.estado)) {
             resumen[item.estado] = item.cantidad;
           }
         });
-        
-        res.json(resumen);
+
+        // El conteo del tab "Citados" también incluye a los candidatos marcados "Citado: Sí" en
+        // el formulario "Nuevo Candidato" (citado_gestion = 'si'), igual que en
+        // getCandidatosPorEstado - se recalcula aparte para no duplicar candidatos que ya tengan
+        // estado = 'citado' (el GROUP BY de arriba no captura ese OR).
+        const condicionCitado = req.usuario.rol === 'administrador' || req.usuario.rol === 'seleccion'
+          ? `(estado = 'citado' OR citado_gestion = 'si')`
+          : `(estado = 'citado' OR citado_gestion = 'si') AND reclutador_id = ?`;
+        const paramsCitado = req.usuario.rol === 'administrador' || req.usuario.rol === 'seleccion'
+          ? []
+          : [req.usuario.id];
+
+        global.db.query(
+          `SELECT COUNT(*) as total FROM hyd_candidatos WHERE ${condicionCitado}`,
+          paramsCitado,
+          (citadoErr, citadoResults) => {
+            if (!citadoErr) {
+              resumen.citado = citadoResults[0].total;
+            }
+            res.json(resumen);
+          }
+        );
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -748,11 +777,20 @@ class CandidatoController {
         tipo_documento, numero_documento, edad, cliente, cargo,
         ciudad, fecha_citacion_entrevista, fuente_reclutamiento,
         contacto_llamada, contacto_whatsapp,
-        observaciones_llamada, observaciones_generales, estado
+        observaciones_llamada, observaciones_generales, estado,
+        perfil, citado_gestion, estado_gestion_reclutamiento
       } = req.body;
 
       if (!nombre_completo || !numero_celular || !cliente || !cargo || !tipo_documento) {
         return res.status(400).json({ error: 'Todos los campos requeridos deben completarse' });
+      }
+
+      // "Citado" (sí/no) reemplaza en NuevoCandidato.jsx a la tipificación "Observaciones de
+      // Llamada" (2026-08-26, ver migración 014) — si el analista logró citar al candidato
+      // (citado_gestion = 'si') debe capturarse el documento; si no, debe explicarse el motivo
+      // vía el desplegable "Estado Gestión Reclutamiento".
+      if (citado_gestion === 'no' && !estado_gestion_reclutamiento) {
+        return res.status(400).json({ error: 'El Estado Gestión Reclutamiento es requerido cuando Citado es "No"' });
       }
 
       // El campo "Nombre Completo" reemplaza a "Primer Nombre"/"Primer Apellido" (2026-08-18)
@@ -767,10 +805,11 @@ class CandidatoController {
       // de Tipo de Documento, que ahora es la única fuente de esa información.
       const nacionalidad = tipo_documento === 'CC' ? 'Colombiano' : 'Venezolano';
 
-      // Validación condicional del número de documento
-      // Si el estado es 'contacto_exitoso', el número de documento es obligatorio
-      if (estado === 'contacto_exitoso' && !numero_documento) {
-        return res.status(400).json({ error: 'El número de identificación es requerido cuando el estado es "contacto exitoso"' });
+      // Validación condicional del número de documento: obligatorio cuando se logró citar al
+      // candidato (citado_gestion = 'si') - mismo criterio que antes usaba
+      // estado === 'contacto_exitoso', adaptado a la nueva tipificación (ver arriba).
+      if (citado_gestion === 'si' && !numero_documento) {
+        return res.status(400).json({ error: 'El número de identificación es requerido cuando Citado es "Sí"' });
       }
 
       // Verificar duplicados (email y cédula)
@@ -810,9 +849,10 @@ class CandidatoController {
             nacionalidad, tipo_documento, numero_documento, edad, cliente, cargo,
             ciudad, fecha_citacion_entrevista, fuente_reclutamiento,
             contacto_llamada, contacto_whatsapp,
-            observaciones_llamada, observaciones_generales, token_acceso, fecha_vencimiento_token,
+            observaciones_llamada, observaciones_generales, citado_gestion, estado_gestion_reclutamiento, perfil,
+            token_acceso, fecha_vencimiento_token,
             estado, reclutador_id, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
         `;
 
         console.log('Creando candidato para reclutador ID:', reclutadorId);
@@ -823,6 +863,7 @@ class CandidatoController {
           ciudad || null, fecha_citacion_entrevista || null,
           fuente_reclutamiento || null, contacto_llamada || null, contacto_whatsapp || null,
           observaciones_llamada || null, observaciones_generales || null,
+          citado_gestion || null, estado_gestion_reclutamiento || null, perfil || null,
           token, fechaVencimiento, estado || 'nuevo', reclutadorId
         ], (err, results) => {
           if (err) {
@@ -1018,6 +1059,53 @@ class CandidatoController {
         res.json({
           message: 'Fecha de entrevista actualizada exitosamente'
         });
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  // Actualiza "Citado" (sí/no) + "Estado Gestión Reclutamiento" desde el modal "Citar" de
+  // ListaCandidatos.jsx (2026-08-26) - reemplaza ahí el flujo de agendar fecha/hora
+  // (actualizarFechaEntrevista) por el mismo control simple Sí/No del formulario "Nuevo
+  // Candidato" (citado_gestion/estado_gestion_reclutamiento, ver migración 014). A propósito NO
+  // toca `estado` ni `fecha_citacion_entrevista` (columnas nuevas, separadas del embudo
+  // existente, misma decisión que en crearCandidato).
+  async actualizarCitadoGestion(req, res) {
+    try {
+      const { candidatoId } = req.params;
+      const { citado_gestion, estado_gestion_reclutamiento } = req.body;
+      const reclutadorId = req.usuario.id;
+      const rol = req.usuario.rol;
+      const esAdmin = rol === 'administrador' || rol === 'seleccion';
+
+      if (!['si', 'no'].includes(citado_gestion)) {
+        return res.status(400).json({ error: 'Citado debe ser "si" o "no"' });
+      }
+      if (citado_gestion === 'no' && !estado_gestion_reclutamiento) {
+        return res.status(400).json({ error: 'El Estado Gestión Reclutamiento es requerido cuando Citado es "No"' });
+      }
+
+      const motivoFinal = citado_gestion === 'si' ? null : estado_gestion_reclutamiento;
+
+      const query = esAdmin
+        ? `UPDATE hyd_candidatos SET citado_gestion = ?, estado_gestion_reclutamiento = ?, updated_at = NOW() WHERE id = ?`
+        : `UPDATE hyd_candidatos SET citado_gestion = ?, estado_gestion_reclutamiento = ?, updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
+      const queryParams = esAdmin
+        ? [citado_gestion, motivoFinal, candidatoId]
+        : [citado_gestion, motivoFinal, candidatoId, reclutadorId];
+
+      global.db.query(query, queryParams, (err, results) => {
+        if (err) {
+          console.error('Error actualizando citado_gestion:', err);
+          return res.status(500).json({ error: 'Error actualizando Citado' });
+        }
+
+        if (results.affectedRows === 0) {
+          return res.status(404).json({ error: 'Candidato no encontrado o no tienes acceso' });
+        }
+
+        res.json({ message: 'Citado actualizado exitosamente' });
       });
     } catch (error) {
       res.status(500).json({ error: error.message });

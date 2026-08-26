@@ -24,6 +24,7 @@ router.put('/editar/:candidatoId', verificarToken, verificarPermiso('editar_cand
 router.put('/cambiar-estado/:candidatoId', verificarToken, verificarPermiso('editar_candidatos'), candidatoController.cambiarEstado);
 router.put('/fecha-entrevista/:candidatoId', verificarToken, verificarPermiso('agendar_entrevistas'), candidatoController.actualizarFechaEntrevista);
 router.put('/no-citado/:candidatoId', verificarToken, verificarPermiso('agendar_entrevistas'), candidatoController.marcarNoCitado);
+router.put('/citado-gestion/:candidatoId', verificarToken, verificarPermiso('agendar_entrevistas'), candidatoController.actualizarCitadoGestion);
 router.get('/reclutadores-activos', verificarToken, verificarPermiso('reasignar_candidatos'), candidatoController.getReclutadoresActivos);
 router.put('/reasignar/:candidatoId', verificarToken, verificarPermiso('reasignar_candidatos'), candidatoController.reasignarCandidato);
 

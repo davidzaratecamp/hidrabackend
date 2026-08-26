@@ -113,8 +113,11 @@ async function actualizarEstudios(token, body) {
     e && (e.nombre_institucion || e.titulo_obtenido || e.ano_finalizacion || e.descripcion)
   );
 
-  if (filasConDatos.length === 0) {
-    throw new HttpError(400, 'Completa al menos un nivel de estudios');
+  // Bachillerato es obligatorio (2026-08-26) - los demás niveles siguen siendo opcionales, ver
+  // Estudios.jsx (revela cada nivel siguiente solo cuando el anterior está lleno).
+  const bachillerato = estudios.find((e) => e && e.nivel_estudios === 'bachillerato');
+  if (!bachillerato || !bachillerato.nombre_institucion || !bachillerato.titulo_obtenido || !bachillerato.ano_finalizacion) {
+    throw new HttpError(400, 'Completa institución, título y año de Bachillerato - es obligatorio');
   }
 
   for (const fila of filasConDatos) {
@@ -171,10 +174,14 @@ async function actualizarExperiencia(token, body) {
     tiempo_laborado_asiste, motivo_retiro_asiste
   } = body;
 
+  // fecha_retiro_experiencia y motivo_retiro son opcionales (2026-08-26): el candidato puede
+  // marcar "Actualmente trabajo aquí" en Experiencia.jsx, que envía fecha_retiro_experiencia
+  // vacía - no se guarda un flag aparte, se infiere de que esa fecha venga vacía (igual que en
+  // el frontend).
   if (!nombre_empresa || !cargo_desempenado || !salario_experiencia || !funciones ||
-      !fecha_inicio_experiencia || !fecha_retiro_experiencia ||
+      !fecha_inicio_experiencia ||
       tiempo_laborado_anos === undefined || tiempo_laborado_meses === undefined ||
-      !motivo_retiro || !ha_trabajado_asiste || !ha_estado_proceso_formativo_asiste) {
+      !ha_trabajado_asiste || !ha_estado_proceso_formativo_asiste) {
     throw new HttpError(400, 'Todos los campos son requeridos');
   }
 
@@ -182,8 +189,8 @@ async function actualizarExperiencia(token, body) {
 
   const resultsExperiencia = await repo.upsertExperiencia(token, {
     nombre_empresa, cargo_desempenado, salario_experiencia, funciones,
-    fecha_inicio_experiencia, fecha_retiro_experiencia,
-    tiempo_laborado_anos, tiempo_laborado_meses, motivo_retiro
+    fecha_inicio_experiencia, fecha_retiro_experiencia: fecha_retiro_experiencia || null,
+    tiempo_laborado_anos, tiempo_laborado_meses, motivo_retiro: motivo_retiro || null
   });
   if (resultsExperiencia.affectedRows === 0) throw new HttpError(404, 'Token inválido o expirado');
 

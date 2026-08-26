@@ -182,6 +182,36 @@ class CandidatoModel {
         { value: 'Reagendar', label: 'Reagendar' },
         { value: 'No apto', label: 'No apto' }
       ],
+      // Opciones del desplegable "Estado Gestión Reclutamiento" del formulario "Nuevo
+      // Candidato" (solo visible cuando Citado = No, ver NuevoCandidato.jsx) - reemplaza ahí
+      // a la tipificación "Observaciones de Llamada" (que sigue existiendo para
+      // EditarCandidato.jsx, catálogo `observaciones_llamada` arriba, sin tocar). Entradas con
+      // `grupo` se renderizan como <optgroup>.
+      estado_gestion_reclutamiento: [
+        { value: '#Errado', label: '#Errado' },
+        { value: 'No Contesta / Msj Global-Wa', label: 'No Contesta / Msj Global-Wa' },
+        { value: 'Contesta / Cuelga / Mensaje Global-Wa', label: 'Contesta / Cuelga / Mensaje Global-Wa' },
+        { grupo: 'NO APTO POR:', opciones: [
+          { value: 'No Apto / Estudiante', label: 'No Apto / Estudiante' },
+          { value: 'No Apto / No experiencia', label: 'No Apto / No experiencia' },
+          { value: 'No Apto / Ubicación', label: 'No Apto / Ubicación' },
+          { value: 'No Apto / Edad mayor a 35', label: 'No Apto / Edad mayor a 35' },
+          { value: 'No Apto / No certificado de bachiller', label: 'No Apto / No certificado de bachiller' },
+          { value: 'No Apto / Menor de edad', label: 'No Apto / Menor de edad' },
+          { value: 'No Apto / Disposición', label: 'No Apto / Disposición' },
+          { value: 'No Apto / Sobreperfilado', label: 'No Apto / Sobreperfilado' },
+          { value: 'No Apto / EPS', label: 'No Apto / EPS' }
+        ] },
+        { grupo: 'NO INTERESADOS POR:', opciones: [
+          { value: 'No interesado / Horarios', label: 'No interesado / Horarios' },
+          { value: 'No interesado / Ventas', label: 'No interesado / Ventas' },
+          { value: 'No interesado / Ubicación', label: 'No interesado / Ubicación' },
+          { value: 'No interesado / Capacitación', label: 'No interesado / Capacitación' },
+          { value: 'No interesado / Call Center', label: 'No interesado / Call Center' },
+          { value: 'No interesado / Ya trabaja', label: 'No interesado / Ya trabaja' },
+          { value: 'No interesado / No parqueadero', label: 'No interesado / No parqueadero' }
+        ] }
+      ],
       cargos_staff: conCargosBaseReclutamiento([
         'Analista Administrativa Y Contable', 'Analista De Calidad', 'Analista De Calidad Pe',
         'Analista De Contratacion', 'Analista De Reclutamiento', 'Analista De Seleccion',

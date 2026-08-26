@@ -23,6 +23,7 @@ function queryAsync(sql, params = []) {
 async function obtenerCandidatoConFormulario(whereClause, params) {
   const rows = await queryAsync(
     `SELECT c.*,
+        u.nombre_completo as nombre_reclutador,
         db.estado_civil, db.aspiracion_salarial, db.direccion_residencial, db.barrio, db.talla_camisa,
         db.genero, db.fecha_nacimiento, db.grupo_sanguineo, db.eps, db.afp,
         db.nombre_emergencia, db.numero_emergencia, db.parentesco_emergencia,
@@ -35,6 +36,7 @@ async function obtenerCandidatoConFormulario(whereClause, params) {
         p.estado_salud_actual, p.tratamiento_psicologico_actual, p.tratamiento_psicologico_detalle,
         cons.ciudad_consentimiento, cons.dia_consentimiento, cons.mes_consentimiento, cons.ano_consentimiento
      FROM hyd_candidatos c
+     LEFT JOIN hyd_usuarios u ON u.id = c.reclutador_id
      LEFT JOIN hyd_candidato_datos_basicos db ON db.candidato_id = c.id
      LEFT JOIN hyd_candidato_experiencia_resumen er ON er.candidato_id = c.id
      LEFT JOIN hyd_candidato_personal p ON p.candidato_id = c.id

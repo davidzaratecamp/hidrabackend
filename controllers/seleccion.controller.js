@@ -192,19 +192,21 @@ function enviarWorkbookExcel(res, workbook, nombreArchivo) {
 
 class SeleccionController {
   
-  // Obtener candidatos en proceso de selección (pantalla "Candidatos" de Selección,
-  // CandidatosSeleccion.jsx). Paginado 20 en 20 (2026-08-21) - antes traía todos los citados sin
-  // límite (1984 filas en local); solo lo consume esta pantalla (CandidatosTotal.jsx, la vista de
-  // solo lectura del reclutador, tiene su propio endpoint dedicado, getCandidatosTotal, desde
-  // 2026-08-19).
-  // Orden (corregido 2026-08-21, segunda vuelta): el intento inicial ordenaba por
-  // fecha_citacion_entrevista ASC ("cita más antigua primero", pensado para priorizar casos
-  // atrasados) - en la práctica eso subía a la cima filas viejas con fecha_citacion_entrevista
-  // basura (ej. "2001-01-01", remanente de datos corruptos/importación defectuosa, ver
-  // claude/context.md) y enterraba candidatos recién citados de verdad. El usuario confirmó que
-  // quiere lo contrario: citados más recientes primero. Se mantiene la prioridad de evaluación
-  // pendiente de decisión (sigue siendo un caso distinto y no cuestionado), pero dentro de cada
-  // grupo ahora ordena por fecha_citacion_entrevista DESC.
+  // Obtener candidatos (pantalla "Candidatos" de Selección, CandidatosSeleccion.jsx). Paginado 20
+  // en 20 (2026-08-21) - antes traía todos los citados sin límite (1984 filas en local); solo lo
+  // consume esta pantalla (CandidatosTotal.jsx, la vista de solo lectura del reclutador, tiene su
+  // propio endpoint dedicado, getCandidatosTotal, desde 2026-08-19).
+  // Ya NO filtra por fecha_citacion_entrevista IS NOT NULL (2026-08-26, pedido del usuario) - antes
+  // solo mostraba candidatos ya citados a entrevista; ahora lista TODOS los candidatos creados, del
+  // más reciente al más antiguo, para que Selección los vea desde que se registran (no solo desde
+  // que se les agenda cita). El nombre del endpoint/función se deja igual (`candidatos-citados`/
+  // `getCandidatosCitados`) para no tocar rutas ni el resto de la app - ver claude/plan.md para el
+  // detalle. El export a Excel de este mismo tab (`exportarExcel`, más abajo) SÍ sigue exigiendo
+  // fecha_citacion_entrevista dentro del rango pedido - es un reporte distinto, no se tocó.
+  // Orden: prioriza evaluación pendiente de decisión final (sin cambios, sigue siendo un caso
+  // aparte); dentro de cada grupo, ahora ordena por fecha de creación más reciente primero
+  // (created_at DESC) - antes ordenaba por fecha_citacion_entrevista DESC, que con candidatos sin
+  // citar (NULL) ya no tiene sentido como criterio principal.
   async getCandidatosCitados(req, res) {
     try {
       const limit = 20;
@@ -242,17 +244,17 @@ class SeleccionController {
         params.push(req.query.fechaHasta);
       }
 
-      const whereExtra = condiciones.length ? ` AND ${condiciones.join(' AND ')}` : '';
+      const whereClause = condiciones.length ? `WHERE ${condiciones.join(' AND ')}` : '';
       const baseFrom = `
         FROM hyd_candidatos c
         LEFT JOIN hyd_usuarios u ON c.reclutador_id = u.id
         LEFT JOIN hyd_usuarios up ON c.psicologo_decision_id = up.id
-        WHERE c.fecha_citacion_entrevista IS NOT NULL${whereExtra}
+        ${whereClause}
       `;
 
-      // El dropdown de "Operación" se calcula sobre TODOS los citados (sin aplicar los demás
-      // filtros activos) - mismo comportamiento que tenía getOperacionesUnicas() client-side,
-      // que leía del array completo, no del ya filtrado.
+      // El dropdown de "Operación" se calcula sobre TODOS los candidatos (sin aplicar los demás
+      // filtros activos) - mismo comportamiento que tenía getOperacionesUnicas() client-side, que
+      // leía del array completo, no del ya filtrado.
       const [countResults, results, operaciones] = await Promise.all([
         queryAsync(`SELECT COUNT(*) as total ${baseFrom}`, params),
         queryAsync(
@@ -263,13 +265,13 @@ class SeleccionController {
           ${baseFrom}
           ORDER BY
             CASE WHEN c.evaluacion_total IS NOT NULL AND c.aprobacion_final IS NULL THEN 1 ELSE 2 END,
-            c.fecha_citacion_entrevista DESC, c.created_at DESC, c.id DESC
+            c.created_at DESC, c.id DESC
           LIMIT ? OFFSET ?`,
           [...params, limit, offset]
         ),
         queryAsync(
           `SELECT DISTINCT cliente FROM hyd_candidatos
-           WHERE fecha_citacion_entrevista IS NOT NULL AND cliente IS NOT NULL
+           WHERE cliente IS NOT NULL
            ORDER BY cliente`
         )
       ]);

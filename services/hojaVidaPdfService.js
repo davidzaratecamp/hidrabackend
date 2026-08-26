@@ -140,7 +140,12 @@ async function generarHojaVidaPdf(candidato) {
     // puntos — nunca se desborda verticalmente y da mucha más capacidad real que envolver.
     drawFit(p1, font, empresaActual.funciones, { x: 73, y: 276, maxWidth: 510, startSize: 8, minSize: 6 });
     drawFit(p1, font, fmtFecha(empresaActual.fecha_inicio), { x: 102, y: 243.45, maxWidth: 88, startSize: 8 });
-    drawFit(p1, font, fmtFecha(empresaActual.fecha_retiro), { x: 243, y: 242.3, maxWidth: 93, startSize: 8 });
+    // fecha_retiro NULL con fecha_inicio presente = "Actualmente trabajo aquí" (Experiencia.jsx,
+    // 2026-08-26) - no se guarda un flag aparte, se infiere de la ausencia de fecha_retiro.
+    const textoFechaRetiro = empresaActual.fecha_retiro
+      ? fmtFecha(empresaActual.fecha_retiro)
+      : (empresaActual.fecha_inicio ? 'Actualidad' : '');
+    drawFit(p1, font, textoFechaRetiro, { x: 243, y: 242.3, maxWidth: 93, startSize: 8 });
     // != null (no truthy): 0 es un valor legítimo ("0 años, 3 meses") — con truthy check se
     // perdía silenciosamente cuando el candidato tenía menos de 1 año/mes en algún campo.
     const formatoUnidad = (valor, singular, plural) => `${valor} ${Number(valor) === 1 ? singular : plural}`;
