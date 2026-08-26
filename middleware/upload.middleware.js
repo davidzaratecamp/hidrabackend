@@ -1,13 +1,17 @@
 const multer = require('multer');
+const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+
+const DIR_ANTECEDENTES = path.join(__dirname, '..', 'uploads', 'antecedentes');
+fs.mkdirSync(DIR_ANTECEDENTES, { recursive: true });
 
 // Almacena en disco bajo uploads/antecedentes, con nombre generado (uuid) para evitar
 // colisiones y path traversal - el nombre original del archivo se guarda aparte en BD
 // (antecedentes_documento_nombre) para mostrarlo al descargar.
 const storageAntecedentes = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, path.join(__dirname, '..', 'uploads', 'antecedentes'));
+    cb(null, DIR_ANTECEDENTES);
   },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
