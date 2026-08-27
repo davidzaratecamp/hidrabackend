@@ -812,27 +812,23 @@ class CandidatoController {
         return res.status(400).json({ error: 'El número de identificación es requerido cuando Citado es "Sí"' });
       }
 
-      // Verificar duplicados (email y cédula)
+      // Verificar duplicados (solo cédula) - la validación de email duplicado se quitó
+      // (2026-08-26, pedido del usuario): ahora sí se puede crear más de un candidato con el
+      // mismo email. También se quitó la restricción UNIQUE de email_personal a nivel de BD
+      // (ver migración 015), que si no seguiría bloqueando el INSERT más abajo.
       const checkDuplicatesQuery = `
-        SELECT id, email_personal, numero_documento 
-        FROM hyd_candidatos 
-        WHERE (email_personal = ? AND email_personal IS NOT NULL AND email_personal != '') 
-           OR (numero_documento = ? AND numero_documento IS NOT NULL AND numero_documento != '')
+        SELECT id, numero_documento
+        FROM hyd_candidatos
+        WHERE numero_documento = ? AND numero_documento IS NOT NULL AND numero_documento != ''
       `;
-      
-      global.db.query(checkDuplicatesQuery, [email_personal || '', numero_documento || ''], (checkErr, checkResults) => {
+
+      global.db.query(checkDuplicatesQuery, [numero_documento || ''], (checkErr, checkResults) => {
         if (checkErr) {
           return res.status(500).json({ error: 'Error verificando duplicados' });
         }
-        
+
         if (checkResults.length > 0) {
-          const existingCandidate = checkResults[0];
-          if (existingCandidate.email_personal === email_personal && email_personal) {
-            return res.status(400).json({ error: 'Ya existe un candidato con este email' });
-          }
-          if (existingCandidate.numero_documento === numero_documento && numero_documento) {
-            return res.status(400).json({ error: 'Ya existe un candidato con esta cédula' });
-          }
+          return res.status(400).json({ error: 'Ya existe un candidato con esta cédula' });
         }
 
         // Generar token único
