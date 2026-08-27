@@ -674,9 +674,12 @@ class CandidatoController {
         const nuevoEstado = candidato.estado === 'contacto_exitoso' ? 'formularios_enviados' : candidato.estado;
         const esAdmin = rol === 'administrador' || rol === 'seleccion';
 
+        // fecha_envio_email se actualiza en cada (re)envío - es lo que ahora muestra la celda
+        // "FECHA DE ENTREVISTA" de la hoja de vida impresa (hojaVidaPdfService.js), ya que
+        // fecha_citacion_entrevista dejó de fijarse en algún lado (ver migración 016).
         const updateQuery = esAdmin
-          ? `UPDATE hyd_candidatos SET token_acceso = ?, fecha_vencimiento_token = ?, formulario_consentimiento_completado = FALSE, estado = ?, updated_at = NOW() WHERE id = ?`
-          : `UPDATE hyd_candidatos SET token_acceso = ?, fecha_vencimiento_token = ?, formulario_consentimiento_completado = FALSE, estado = ?, updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
+          ? `UPDATE hyd_candidatos SET token_acceso = ?, fecha_vencimiento_token = ?, fecha_envio_email = NOW(), formulario_consentimiento_completado = FALSE, estado = ?, updated_at = NOW() WHERE id = ?`
+          : `UPDATE hyd_candidatos SET token_acceso = ?, fecha_vencimiento_token = ?, fecha_envio_email = NOW(), formulario_consentimiento_completado = FALSE, estado = ?, updated_at = NOW() WHERE id = ? AND reclutador_id = ?`;
         const updateParams = esAdmin
           ? [nuevoToken, nuevaFechaVencimiento, nuevoEstado, candidatoId]
           : [nuevoToken, nuevaFechaVencimiento, nuevoEstado, candidatoId, reclutadorId];

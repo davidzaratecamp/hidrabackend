@@ -66,7 +66,11 @@ async function generarHojaVidaPdf(candidato) {
   // x=184 (antes 108): la fila tiene su propio recuadro en blanco para el valor, entre
   // x=180.4 y x=336.3 — con x=108 la fecha arrancaba todavía dentro de la celda de la
   // etiqueta "FECHA DE ENTREVISTA:" en vez de en el recuadro vacío de al lado.
-  drawFit(p1, font, fmtFecha(candidato.fecha_citacion_entrevista), { x: 184, y: 681.56, maxWidth: 148 });
+  // Usa fecha_envio_email en vez de fecha_citacion_entrevista (2026-08-27) - desde que el modal
+  // "Citar" dejó de pedir fecha/hora, nada fija fecha_citacion_entrevista; esta celda ahora
+  // refleja cuándo se le envió al candidato el email con el link de sus formularios (ver
+  // migración 016 y reenviarEmail en candidato.controller.js).
+  drawFit(p1, font, fmtFecha(candidato.fecha_envio_email), { x: 184, y: 681.56, maxWidth: 148 });
   drawFit(p1, font, candidato.fuente_reclutamiento, { x: 427, y: 676.4, maxWidth: 165 });
   drawFit(p1, font, candidato.cargo, { x: 183, y: 659.16, maxWidth: 150 });
   drawFit(p1, font, candidato.aspiracion_salarial, { x: 424, y: 659.16, maxWidth: 168 });
