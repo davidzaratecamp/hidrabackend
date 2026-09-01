@@ -16,7 +16,9 @@ const { HttpError } = require('../../shared/errors/HttpError');
 
 const periodo = z.object({
   anio: z.coerce.number().int().min(2000).max(2100),
-  mes: z.coerce.number().int().min(1).max(12),
+  // La API externa de nómina identifica el mes por nombre en español
+  // ("septiembre"), no por número: se pasa tal cual, sin forzar un rango 1-12.
+  mes: z.string().min(1),
 });
 
 function crearDesprendiblesRutas({ nomina, autenticar }) {
