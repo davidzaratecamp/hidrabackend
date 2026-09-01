@@ -154,3 +154,9 @@ temp/
 
 # Scripts específicos del proyecto
 scripts/generar_passwords.js
+
+# Archivos subidos por usuarios (ej. documentos de antecedentes) - datos de producción,
+# no se versionan; la estructura de carpetas se preserva vía .gitkeep
+uploads/**
+!uploads/**/
+!uploads/**/.gitkeep
