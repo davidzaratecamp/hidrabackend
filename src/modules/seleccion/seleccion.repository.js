@@ -239,11 +239,144 @@ function crearSeleccionRepositorio({ db }) {
     return filas[0] ?? null;
   }
 
+  // ------------------------------------------------ aprobación de entrevista --
+  // Paso previo e informativo a la decisión final (ver migración 014). Ya no
+  // está restringida a cargo Agente (decisión de negocio, 2026-09-02): un
+  // candidato Staff también la usa, mientras está "entrevistado". Upsert por
+  // candidato, mismo patrón que `guardarDecisionFinal`.
+  async function guardarAprobacionEntrevista({ candidatoId, aprobacion, razon, usuarioId }) {
+    await db.query(
+      `INSERT INTO candidato_aprobacion_entrevista (candidato_id, aprobacion, razon, usuario_id)
+       VALUES (?,?,?,?)
+       ON DUPLICATE KEY UPDATE
+         aprobacion = VALUES(aprobacion), razon = VALUES(razon), usuario_id = VALUES(usuario_id)`,
+      [candidatoId, aprobacion, razon ?? null, usuarioId]
+    );
+  }
+
+  async function aprobacionEntrevistaDe(candidatoId) {
+    const [filas] = await db.query(
+      `SELECT a.aprobacion, a.razon, a.created_at, a.updated_at,
+              u.nombre_completo AS usuario
+         FROM candidato_aprobacion_entrevista a
+         LEFT JOIN usuarios u ON u.id = a.usuario_id
+        WHERE a.candidato_id = ?`,
+      [candidatoId]
+    );
+    return filas[0] ?? null;
+  }
+
+  // -------------------------------------------------------- citar a formación --
+  // Paso posterior e informativo a la decisión final aprobada, solo para
+  // cargo Agente (ver migración 015; restringido a Agente desde la 016,
+  // decisión de negocio 2026-09-02 — Staff tiene "contratación", más abajo).
+  // Upsert por candidato, mismo patrón que `guardarAprobacionEntrevista`.
+  async function guardarCitacionFormacion({ candidatoId, citado, razon, usuarioId }) {
+    await db.query(
+      `INSERT INTO candidato_citacion_formacion (candidato_id, citado, razon, usuario_id)
+       VALUES (?,?,?,?)
+       ON DUPLICATE KEY UPDATE
+         citado = VALUES(citado), razon = VALUES(razon), usuario_id = VALUES(usuario_id)`,
+      [candidatoId, citado, razon ?? null, usuarioId]
+    );
+  }
+
+  async function citacionFormacionDe(candidatoId) {
+    const [filas] = await db.query(
+      `SELECT c.citado, c.razon, c.created_at, c.updated_at,
+              u.nombre_completo AS usuario
+         FROM candidato_citacion_formacion c
+         LEFT JOIN usuarios u ON u.id = c.usuario_id
+        WHERE c.candidato_id = ?`,
+      [candidatoId]
+    );
+    return filas[0] ?? null;
+  }
+
+  // ------------------------------------------------- aprobación jefe inmediato --
+  // Paso previo e informativo a la decisión final, solo para candidatos Staff
+  // (ver migración 016). Upsert por candidato, mismo patrón que el resto de
+  // esta familia.
+  async function guardarAprobacionJefeInmediato({ candidatoId, aprobacion, razon, usuarioId }) {
+    await db.query(
+      `INSERT INTO candidato_aprobacion_jefe_inmediato (candidato_id, aprobacion, razon, usuario_id)
+       VALUES (?,?,?,?)
+       ON DUPLICATE KEY UPDATE
+         aprobacion = VALUES(aprobacion), razon = VALUES(razon), usuario_id = VALUES(usuario_id)`,
+      [candidatoId, aprobacion, razon ?? null, usuarioId]
+    );
+  }
+
+  async function aprobacionJefeInmediatoDe(candidatoId) {
+    const [filas] = await db.query(
+      `SELECT a.aprobacion, a.razon, a.created_at, a.updated_at,
+              u.nombre_completo AS usuario
+         FROM candidato_aprobacion_jefe_inmediato a
+         LEFT JOIN usuarios u ON u.id = a.usuario_id
+        WHERE a.candidato_id = ?`,
+      [candidatoId]
+    );
+    return filas[0] ?? null;
+  }
+
+  // ------------------------------------------------- aprobación prueba técnica --
+  async function guardarAprobacionPruebaTecnica({ candidatoId, aprobacion, razon, usuarioId }) {
+    await db.query(
+      `INSERT INTO candidato_aprobacion_prueba_tecnica (candidato_id, aprobacion, razon, usuario_id)
+       VALUES (?,?,?,?)
+       ON DUPLICATE KEY UPDATE
+         aprobacion = VALUES(aprobacion), razon = VALUES(razon), usuario_id = VALUES(usuario_id)`,
+      [candidatoId, aprobacion, razon ?? null, usuarioId]
+    );
+  }
+
+  async function aprobacionPruebaTecnicaDe(candidatoId) {
+    const [filas] = await db.query(
+      `SELECT a.aprobacion, a.razon, a.created_at, a.updated_at,
+              u.nombre_completo AS usuario
+         FROM candidato_aprobacion_prueba_tecnica a
+         LEFT JOIN usuarios u ON u.id = a.usuario_id
+        WHERE a.candidato_id = ?`,
+      [candidatoId]
+    );
+    return filas[0] ?? null;
+  }
+
+  // --------------------------------------------------------------- contratación --
+  // Paso posterior e informativo a la decisión final aprobada, solo Staff:
+  // contraparte de "citar a formación" para cargo Agente (migración 016).
+  async function guardarContratacion({ candidatoId, contratado, razon, usuarioId }) {
+    await db.query(
+      `INSERT INTO candidato_contratacion (candidato_id, contratado, razon, usuario_id)
+       VALUES (?,?,?,?)
+       ON DUPLICATE KEY UPDATE
+         contratado = VALUES(contratado), razon = VALUES(razon), usuario_id = VALUES(usuario_id)`,
+      [candidatoId, contratado, razon ?? null, usuarioId]
+    );
+  }
+
+  async function contratacionDe(candidatoId) {
+    const [filas] = await db.query(
+      `SELECT c.contratado, c.razon, c.created_at, c.updated_at,
+              u.nombre_completo AS usuario
+         FROM candidato_contratacion c
+         LEFT JOIN usuarios u ON u.id = c.usuario_id
+        WHERE c.candidato_id = ?`,
+      [candidatoId]
+    );
+    return filas[0] ?? null;
+  }
+
   return {
     crearCitacion, citacionPendiente, citacionesDe, registrarAsistencia, registrarSeguimiento, agenda,
     crearEvaluacion, guardarPuntajes, criteriosActivos, evaluacionConTotal,
     evaluacionesDe, puntajesDe,
     guardarDecisionFinal, decisionFinalDe,
+    guardarAprobacionEntrevista, aprobacionEntrevistaDe,
+    guardarCitacionFormacion, citacionFormacionDe,
+    guardarAprobacionJefeInmediato, aprobacionJefeInmediatoDe,
+    guardarAprobacionPruebaTecnica, aprobacionPruebaTecnicaDe,
+    guardarContratacion, contratacionDe,
   };
 }
 

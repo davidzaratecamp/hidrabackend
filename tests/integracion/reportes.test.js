@@ -324,7 +324,7 @@ describe('Estadísticas y analíticas', () => {
     expect(res.body.datos[0]).toMatchObject({ total: 6 });
   });
 
-  it('las analíticas respetan la visibilidad por dueño', async () => {
+  it('ver_candidatos_todos hace que las analíticas ya no filtren por dueño (decisión 2026-09-02)', async () => {
     const otro = correo('otro-rec');
     await crearUsuario({ email: otro, roles: ['reclutamiento'] });
     const sesionOtro = await iniciarSesion(otro);
@@ -334,8 +334,11 @@ describe('Estadísticas y analíticas', () => {
       .set({ Authorization: `Bearer ${sesionOtro.token}` });
 
     expect(res.status).toBe(200);
-    // No tiene candidatos propios: no ve los de nadie más.
-    expect(res.body.datos).toEqual([]);
+    // Desde el permiso `ver_candidatos_todos` (migración 012, ver
+    // visibilidad.js), un reclutador sin candidatos propios igual ve las
+    // analíticas globales, no las suyas — antes de esa migración este mismo
+    // test esperaba `[]`.
+    expect(res.body.datos.length).toBeGreaterThan(0);
   });
 });
 

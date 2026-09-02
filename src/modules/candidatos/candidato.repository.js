@@ -31,6 +31,21 @@ const SELECT_BASE = `
          eva.created_at AS fecha_evaluacion,
          df.aprobacion AS decision_aprobacion, df.razon AS decision_razon,
          df.created_at AS fecha_decision, psi.nombre_completo AS decision_psicologo,
+         -- Aprobación de entrevista (Agente y Staff): paso previo e
+         -- informativo a la decisión final, migración 014.
+         ae.aprobacion AS aprobacion_entrevista, ae.razon AS aprobacion_entrevista_razon,
+         ae.created_at AS fecha_aprobacion_entrevista,
+         -- Citación a formación (solo cargo Agente, aprobado en decisión
+         -- final): paso posterior e informativo, migración 015.
+         cf.citado AS citado_formacion, cf.razon AS citado_formacion_razon,
+         cf.created_at AS fecha_citacion_formacion,
+         -- Aprobaciones de Staff previas a la decisión final: jefe inmediato
+         -- y prueba técnica, migración 016.
+         aji.aprobacion AS aprobacion_jefe_inmediato, aji.razon AS aprobacion_jefe_inmediato_razon,
+         apt.aprobacion AS aprobacion_prueba_tecnica, apt.razon AS aprobacion_prueba_tecnica_razon,
+         -- Contratación (solo Staff, aprobado en decisión final): contraparte
+         -- de "citar a formación" para Agente, migración 016.
+         ctr.contratado AS contratacion, ctr.razon AS contratacion_razon,
          -- Seguimiento antes de la entrevista, de la citación pendiente (si
          -- hay una): alimenta el color del botón "Seguimiento" del listado.
          cita.seguimiento_llamada, cita.seguimiento_whatsapp
@@ -52,6 +67,11 @@ const SELECT_BASE = `
     LEFT JOIN v_evaluacion_totales ev ON ev.evaluacion_id = eva.id
     LEFT JOIN candidato_decision_final df ON df.candidato_id = c.id
     LEFT JOIN usuarios psi    ON psi.id = df.psicologo_id
+    LEFT JOIN candidato_aprobacion_entrevista ae ON ae.candidato_id = c.id
+    LEFT JOIN candidato_citacion_formacion cf ON cf.candidato_id = c.id
+    LEFT JOIN candidato_aprobacion_jefe_inmediato aji ON aji.candidato_id = c.id
+    LEFT JOIN candidato_aprobacion_prueba_tecnica apt ON apt.candidato_id = c.id
+    LEFT JOIN candidato_contratacion ctr ON ctr.candidato_id = c.id
     -- Citación pendiente del candidato, si tiene una: igual que "eva" arriba,
     -- correlacionada porque la tabla es 1:N (se puede reagendar).
     LEFT JOIN candidato_citaciones cita
@@ -101,7 +121,7 @@ function crearCandidatoRepositorio({ db }) {
    * @param {object} filtros
    * @param {{sql: string|null, params: unknown[]}} filtros.visibilidad Filtro por dueño ya resuelto.
    */
-  async function listar({ pagina, porPagina, busqueda, estado, cliente, agentes, visibilidad, ordenarPor, direccion }) {
+  async function listar({ pagina, porPagina, busqueda, estado, cliente, agentes, staff, visibilidad, ordenarPor, direccion }) {
     const condiciones = [];
     const params = [];
 
@@ -119,6 +139,12 @@ function crearCandidatoRepositorio({ db }) {
     }
     if (agentes) {
       condiciones.push('ca.codigo LIKE ?');
+      params.push('%agente%');
+    }
+    // Contraparte de "agentes": "Candidatos Staff" del menú lateral, todo
+    // cargo que no sea Agente (decisión de negocio, 2026-09-02).
+    if (staff) {
+      condiciones.push('ca.codigo NOT LIKE ?');
       params.push('%agente%');
     }
     if (busqueda) {

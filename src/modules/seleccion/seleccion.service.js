@@ -29,6 +29,15 @@ const UMBRAL_APROBACION = 71;
  */
 const esCargoAgente = (candidato) => /agente/i.test(candidato.cargo ?? '');
 
+/**
+ * Estados donde ya hubo entrevista y todavía no hay decisión final: los
+ * únicos donde tiene sentido registrar "aprobación de entrevista". Cubre
+ * tanto a Agente (pasa por `evaluar()` primero, así que llega en "aprobado" o
+ * "rechazado") como a Staff (sin evaluación de criterios, sigue en
+ * "entrevistado" hasta que Selección decide).
+ */
+const ESTADOS_ENTREVISTA_APROBABLE = ['entrevistado', 'aprobado', 'rechazado'];
+
 function crearSeleccionServicio({
   seleccionRepo,
   candidatoRepo,
@@ -267,6 +276,44 @@ function crearSeleccionServicio({
       return { ...evaluacion, umbral: UMBRAL_APROBACION, detalle: await seleccionRepo.puntajesDe(evaluacionId) };
     },
 
+    /**
+     * Aprobación de entrevista: paso previo e informativo a la decisión final.
+     * No cambia el estado del candidato ni bloquea "Decidir" — es una nota
+     * adicional del expediente (decisión de negocio, 2026-09-02), a
+     * diferencia de `evaluar()`, cuyo `aprobado` sí lo deriva el umbral y sí
+     * mueve el estado.
+     *
+     * Ya NO está restringida a cargo Agente (decisión de negocio,
+     * 2026-09-02): un candidato Staff también la usa, mientras sigue
+     * "entrevistado" pendiente de decisión final (no pasa por `evaluar()`,
+     * que sí es exclusivo de Agente). Se valida por estado, no por cargo.
+     */
+    async aprobarEntrevista(candidatoId, { aprobacion, razon }, usuario) {
+      const candidato = await candidatoServicio.obtenerAccesible(candidatoId, usuario);
+
+      if (!ESTADOS_ENTREVISTA_APROBABLE.includes(candidato.estado)) {
+        throw HttpError.conflicto(
+          `La aprobación de entrevista solo aplica a un candidato entrevistado, aprobado o rechazado en evaluación (está en "${candidato.estado}")`,
+          { codigo: 'APROBACION_ENTREVISTA_NO_APLICA' }
+        );
+      }
+
+      if (!aprobacion && !razon) {
+        throw HttpError.peticionInvalida('Rechazar exige indicar la razón', {
+          codigo: 'RAZON_REQUERIDA',
+        });
+      }
+
+      await seleccionRepo.guardarAprobacionEntrevista({
+        candidatoId,
+        aprobacion,
+        razon,
+        usuarioId: usuario.id,
+      });
+
+      return seleccionRepo.aprobacionEntrevistaDe(candidatoId);
+    },
+
     /** Decisión final del psicólogo, posterior e independiente del puntaje. */
     async decidir(candidatoId, { aprobacion, razon }, usuario) {
       const candidato = await candidatoServicio.obtenerAccesible(candidatoId, usuario);
@@ -306,15 +353,166 @@ function crearSeleccionServicio({
       return seleccionRepo.decisionFinalDe(candidatoId);
     },
 
+    /**
+     * Citar a formación: paso posterior e informativo a la decisión final
+     * aprobada, solo cargo Agente (decisión de negocio, 2026-09-02: Staff
+     * tiene "contratación", más abajo — no tenía sentido que un mismo
+     * candidato pudiera recibir los dos pasos). No cambia el estado del
+     * candidato — es una nota del expediente, no una transición.
+     */
+    async citarFormacion(candidatoId, { citado, razon }, usuario) {
+      const candidato = await candidatoServicio.obtenerAccesible(candidatoId, usuario);
+
+      if (candidato.estado !== 'aprobado_final') {
+        throw HttpError.conflicto(
+          `Solo se puede citar a formación a un candidato aprobado en decisión final (está en "${candidato.estado}")`,
+          { codigo: 'CITACION_FORMACION_NO_APLICA' }
+        );
+      }
+
+      if (!esCargoAgente(candidato)) {
+        throw HttpError.conflicto(
+          `Citar a formación solo aplica a candidatos con cargo Agente (este es "${candidato.cargo}"); usa "contratación"`,
+          { codigo: 'CITACION_FORMACION_NO_APLICA' }
+        );
+      }
+
+      if (!citado && !razon) {
+        throw HttpError.peticionInvalida('Si no se cita a formación debes indicar la razón', {
+          codigo: 'RAZON_REQUERIDA',
+        });
+      }
+
+      await seleccionRepo.guardarCitacionFormacion({
+        candidatoId,
+        citado,
+        razon,
+        usuarioId: usuario.id,
+      });
+
+      return seleccionRepo.citacionFormacionDe(candidatoId);
+    },
+
+    /**
+     * Aprobación del jefe inmediato: paso previo e informativo a la decisión
+     * final, solo Staff (cargo distinto a Agente) — la contraparte, para
+     * Staff, de la evaluación de 5 criterios que solo aplica a Agente.
+     */
+    async aprobarJefeInmediato(candidatoId, { aprobacion, razon }, usuario) {
+      const candidato = await candidatoServicio.obtenerAccesible(candidatoId, usuario);
+
+      if (candidato.estado !== 'entrevistado' || esCargoAgente(candidato)) {
+        throw HttpError.conflicto(
+          `La aprobación del jefe inmediato solo aplica a un candidato Staff entrevistado, pendiente de decisión final (está en "${candidato.estado}", cargo "${candidato.cargo}")`,
+          { codigo: 'APROBACION_JEFE_INMEDIATO_NO_APLICA' }
+        );
+      }
+
+      if (!aprobacion && !razon) {
+        throw HttpError.peticionInvalida('Rechazar exige indicar la razón', {
+          codigo: 'RAZON_REQUERIDA',
+        });
+      }
+
+      await seleccionRepo.guardarAprobacionJefeInmediato({
+        candidatoId,
+        aprobacion,
+        razon,
+        usuarioId: usuario.id,
+      });
+
+      return seleccionRepo.aprobacionJefeInmediatoDe(candidatoId);
+    },
+
+    /** Aprobación de la prueba técnica: mismo criterio que el jefe inmediato. */
+    async aprobarPruebaTecnica(candidatoId, { aprobacion, razon }, usuario) {
+      const candidato = await candidatoServicio.obtenerAccesible(candidatoId, usuario);
+
+      if (candidato.estado !== 'entrevistado' || esCargoAgente(candidato)) {
+        throw HttpError.conflicto(
+          `La aprobación de la prueba técnica solo aplica a un candidato Staff entrevistado, pendiente de decisión final (está en "${candidato.estado}", cargo "${candidato.cargo}")`,
+          { codigo: 'APROBACION_PRUEBA_TECNICA_NO_APLICA' }
+        );
+      }
+
+      if (!aprobacion && !razon) {
+        throw HttpError.peticionInvalida('Rechazar exige indicar la razón', {
+          codigo: 'RAZON_REQUERIDA',
+        });
+      }
+
+      await seleccionRepo.guardarAprobacionPruebaTecnica({
+        candidatoId,
+        aprobacion,
+        razon,
+        usuarioId: usuario.id,
+      });
+
+      return seleccionRepo.aprobacionPruebaTecnicaDe(candidatoId);
+    },
+
+    /**
+     * Contratación: paso posterior e informativo a la decisión final
+     * aprobada, solo Staff — contraparte de "citar a formación" para Agente.
+     */
+    async registrarContratacion(candidatoId, { contratado, razon }, usuario) {
+      const candidato = await candidatoServicio.obtenerAccesible(candidatoId, usuario);
+
+      if (candidato.estado !== 'aprobado_final' || esCargoAgente(candidato)) {
+        throw HttpError.conflicto(
+          `La contratación solo aplica a un candidato Staff aprobado en decisión final (está en "${candidato.estado}", cargo "${candidato.cargo}")`,
+          { codigo: 'CONTRATACION_NO_APLICA' }
+        );
+      }
+
+      if (!contratado && !razon) {
+        throw HttpError.peticionInvalida('Si no se contrata debes indicar la razón', {
+          codigo: 'RAZON_REQUERIDA',
+        });
+      }
+
+      await seleccionRepo.guardarContratacion({
+        candidatoId,
+        contratado,
+        razon,
+        usuarioId: usuario.id,
+      });
+
+      return seleccionRepo.contratacionDe(candidatoId);
+    },
+
     /** Expediente de selección completo de un candidato. */
     async expediente(candidatoId, usuario) {
       await candidatoServicio.obtenerAccesible(candidatoId, usuario);
-      const [citaciones, evaluaciones, decision] = await Promise.all([
+      const [
+        citaciones,
+        evaluaciones,
+        decision,
+        aprobacionEntrevista,
+        citacionFormacion,
+        aprobacionJefeInmediato,
+        aprobacionPruebaTecnica,
+        contratacion,
+      ] = await Promise.all([
         seleccionRepo.citacionesDe(candidatoId),
         seleccionRepo.evaluacionesDe(candidatoId),
         seleccionRepo.decisionFinalDe(candidatoId),
+        seleccionRepo.aprobacionEntrevistaDe(candidatoId),
+        seleccionRepo.citacionFormacionDe(candidatoId),
+        seleccionRepo.aprobacionJefeInmediatoDe(candidatoId),
+        seleccionRepo.aprobacionPruebaTecnicaDe(candidatoId),
+        seleccionRepo.contratacionDe(candidatoId),
       ]);
-      return { citaciones, evaluaciones, decisionFinal: decision };
+      return {
+        citaciones,
+        evaluaciones,
+        decisionFinal: decision,
+        aprobacionEntrevista,
+        citacionFormacion,
+        aprobacionJefeInmediato,
+        aprobacionPruebaTecnica,
+        contratacion,
+      };
     },
   };
 }

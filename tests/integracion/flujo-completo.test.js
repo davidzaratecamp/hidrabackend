@@ -751,6 +751,31 @@ describe('Flujo completo del embudo de reclutamiento', () => {
     expect(res.body.error.codigo).toBe('ESTADO_NO_EVALUABLE');
   });
 
+  it('11c. aprobación de entrevista: informativa, no bloquea la decisión final', async () => {
+    const rechazo = await request(app)
+      .post(`/api/seleccion/candidatos/${candidatoId}/aprobacion-entrevista`)
+      .set(auth('seleccion'))
+      .send({ aprobacion: false });
+    // Igual que "Decidir": rechazar exige razón.
+    expect(rechazo.status).toBe(400);
+    expect(rechazo.body.error.codigo).toBe('RAZON_REQUERIDA');
+
+    const res = await request(app)
+      .post(`/api/seleccion/candidatos/${candidatoId}/aprobacion-entrevista`)
+      .set(auth('seleccion'))
+      .send({ aprobacion: true, razon: 'Buena impresión general' });
+    expect(res.status).toBe(200);
+    expect(res.body.datos.aprobacion).toBe(true);
+
+    // No cambió el estado del candidato: sigue "aprobado" (evaluación), no
+    // decidido — decisión final es la única transición de estado acá.
+    const perfil = await request(app)
+      .get(`/api/candidatos/${candidatoId}`)
+      .set(auth('seleccion'));
+    expect(perfil.body.datos.estado).toBe('aprobado');
+    expect(perfil.body.datos.aprobacion_entrevista).toBe(true);
+  });
+
   it('12. decisión final del área de selección', async () => {
     const res = await request(app)
       .post(`/api/seleccion/candidatos/${candidatoId}/decision-final`)
@@ -764,6 +789,29 @@ describe('Flujo completo del embudo de reclutamiento', () => {
       .get(`/api/candidatos/${candidatoId}`)
       .set(auth('seleccion'));
     expect(perfil.body.datos.estado).toBe('aprobado_final');
+  });
+
+  it('12b. citar a formación: informativo, no bloquea nada ni cambia el estado', async () => {
+    const rechazo = await request(app)
+      .post(`/api/seleccion/candidatos/${candidatoId}/citacion-formacion`)
+      .set(auth('seleccion'))
+      .send({ citado: false });
+    // Igual que "Decidir": no citar exige razón.
+    expect(rechazo.status).toBe(400);
+    expect(rechazo.body.error.codigo).toBe('RAZON_REQUERIDA');
+
+    const res = await request(app)
+      .post(`/api/seleccion/candidatos/${candidatoId}/citacion-formacion`)
+      .set(auth('seleccion'))
+      .send({ citado: true });
+    expect(res.status).toBe(200);
+    expect(res.body.datos.citado).toBe(true);
+
+    const perfil = await request(app)
+      .get(`/api/candidatos/${candidatoId}`)
+      .set(auth('seleccion'));
+    expect(perfil.body.datos.estado).toBe('aprobado_final');
+    expect(perfil.body.datos.citado_formacion).toBe(true);
   });
 
   it('13. el historial reconstruye todo el recorrido, con autor y motivo', async () => {
@@ -806,7 +854,7 @@ describe('Flujo completo del embudo de reclutamiento', () => {
 
 // ---------------------------------------------------------------------------
 
-describe('Aislamiento entre reclutadores', () => {
+describe('Visibilidad entre reclutadores (ver_candidatos_todos) y permisos de selección', () => {
   let candidatoAjenoId;
 
   beforeAll(async () => {
@@ -828,30 +876,35 @@ describe('Aislamiento entre reclutadores', () => {
     candidatosCreados.push(candidatoAjenoId);
   });
 
-  it('un reclutador NO ve el candidato de otro en el listado', async () => {
+  // Desde el permiso `ver_candidatos_todos` (migración 012, decisión de
+  // negocio 2026-09-02: "todos los roles deben ver el listado completo, sin
+  // importar quién registró a cada candidato", ver visibilidad.js), un
+  // reclutador SÍ ve, abre y muta candidatos ajenos — esta suite se llamaba
+  // "Aislamiento entre reclutadores" cuando eso todavía no existía.
+  // `ver_perfiles_completos` (sin tocar) sigue aparte, gateando solo datos
+  // sensibles de histórico/trazabilidad.
+  it('un reclutador SÍ ve el candidato de otro en el listado', async () => {
     const res = await request(app).get('/api/candidatos?porPagina=100').set(auth('reclutador'));
     const ids = res.body.datos.map((c) => c.id);
-    expect(ids).not.toContain(candidatoAjenoId);
+    expect(ids).toContain(candidatoAjenoId);
   });
 
-  it('un reclutador NO puede abrir el perfil de un candidato ajeno', async () => {
+  it('un reclutador SÍ puede abrir el perfil de un candidato ajeno', async () => {
     const res = await request(app)
       .get(`/api/candidatos/${candidatoAjenoId}`)
       .set(auth('reclutador'));
-
-    // 404, no 403: un 403 confirmaría que el candidato existe.
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(200);
   });
 
-  it('un reclutador NO puede mutar un candidato ajeno', async () => {
+  it('un reclutador SÍ puede mutar un candidato ajeno', async () => {
     const res = await request(app)
       .post(`/api/candidatos/${candidatoAjenoId}/estado`)
       .set(auth('reclutador'))
       .send({ estado: 'contacto_exitoso' });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(200);
   });
 
-  it('selección SÍ ve todos los candidatos (tiene ver_perfiles_completos)', async () => {
+  it('selección SÍ ve todos los candidatos (tiene ver_candidatos_todos)', async () => {
     const res = await request(app)
       .get(`/api/candidatos/${candidatoAjenoId}`)
       .set(auth('seleccion'));
@@ -910,6 +963,63 @@ describe('Evaluación solo aplica a cargo Agente', () => {
     expect(res.body.error.codigo).toBe('EVALUACION_NO_APLICA');
   });
 
+  it('un candidato Staff (no Agente) SÍ puede usar aprobación de entrevista', async () => {
+    const res = await request(app)
+      .post(`/api/seleccion/candidatos/${candidatoId}/aprobacion-entrevista`)
+      .set(auth('seleccion'))
+      .send({ aprobacion: true });
+    expect(res.status).toBe(200);
+    expect(res.body.datos.aprobacion).toBe(true);
+  });
+
+  it('jefe inmediato y prueba técnica: informativos, razón obligatoria al rechazar', async () => {
+    const sinRazon = await request(app)
+      .post(`/api/seleccion/candidatos/${candidatoId}/aprobacion-jefe-inmediato`)
+      .set(auth('seleccion'))
+      .send({ aprobacion: false });
+    expect(sinRazon.status).toBe(400);
+    expect(sinRazon.body.error.codigo).toBe('RAZON_REQUERIDA');
+
+    const jefe = await request(app)
+      .post(`/api/seleccion/candidatos/${candidatoId}/aprobacion-jefe-inmediato`)
+      .set(auth('seleccion'))
+      .send({ aprobacion: true });
+    expect(jefe.status).toBe(200);
+    expect(jefe.body.datos.aprobacion).toBe(true);
+
+    const prueba = await request(app)
+      .post(`/api/seleccion/candidatos/${candidatoId}/aprobacion-prueba-tecnica`)
+      .set(auth('seleccion'))
+      .send({ aprobacion: false, razon: 'No superó la prueba de Excel' });
+    expect(prueba.status).toBe(200);
+    expect(prueba.body.datos.aprobacion).toBe(false);
+
+    const perfil = await request(app)
+      .get(`/api/candidatos/${candidatoId}`)
+      .set(auth('seleccion'));
+    expect(perfil.body.datos.estado).toBe('entrevistado'); // informativos: no mueven el estado
+    expect(perfil.body.datos.aprobacion_jefe_inmediato).toBe(true);
+    expect(perfil.body.datos.aprobacion_prueba_tecnica).toBe(false);
+  });
+
+  it('no se puede citar a formación antes de la decisión final', async () => {
+    const res = await request(app)
+      .post(`/api/seleccion/candidatos/${candidatoId}/citacion-formacion`)
+      .set(auth('seleccion'))
+      .send({ citado: true });
+    expect(res.status).toBe(409);
+    expect(res.body.error.codigo).toBe('CITACION_FORMACION_NO_APLICA');
+  });
+
+  it('no se puede registrar contratación antes de la decisión final', async () => {
+    const res = await request(app)
+      .post(`/api/seleccion/candidatos/${candidatoId}/contratacion`)
+      .set(auth('seleccion'))
+      .send({ contratado: true });
+    expect(res.status).toBe(409);
+    expect(res.body.error.codigo).toBe('CONTRATACION_NO_APLICA');
+  });
+
   it('la decisión final se toma directo desde "entrevistado", sin evaluación', async () => {
     const res = await request(app)
       .post(`/api/seleccion/candidatos/${candidatoId}/decision-final`)
@@ -922,6 +1032,31 @@ describe('Evaluación solo aplica a cargo Agente', () => {
       .get(`/api/candidatos/${candidatoId}`)
       .set(auth('seleccion'));
     expect(perfil.body.datos.estado).toBe('aprobado_final');
+  });
+
+  it('citar a formación NO aplica a un candidato Staff (usa contratación)', async () => {
+    const res = await request(app)
+      .post(`/api/seleccion/candidatos/${candidatoId}/citacion-formacion`)
+      .set(auth('seleccion'))
+      .send({ citado: true });
+    expect(res.status).toBe(409);
+    expect(res.body.error.codigo).toBe('CITACION_FORMACION_NO_APLICA');
+  });
+
+  it('contratación ya sí aplica una vez aprobado_final', async () => {
+    const sinRazon = await request(app)
+      .post(`/api/seleccion/candidatos/${candidatoId}/contratacion`)
+      .set(auth('seleccion'))
+      .send({ contratado: false });
+    expect(sinRazon.status).toBe(400);
+    expect(sinRazon.body.error.codigo).toBe('RAZON_REQUERIDA');
+
+    const res = await request(app)
+      .post(`/api/seleccion/candidatos/${candidatoId}/contratacion`)
+      .set(auth('seleccion'))
+      .send({ contratado: true });
+    expect(res.status).toBe(200);
+    expect(res.body.datos.contratado).toBe(true);
   });
 
   it('un candidato Agente NO puede saltarse la evaluación con este mismo atajo', async () => {
@@ -950,6 +1085,15 @@ describe('Evaluación solo aplica a cargo Agente', () => {
       .send({ aprobacion: true });
     expect(decidir.status).toBe(409);
     expect(decidir.body.error.codigo).toBe('EVALUACION_REQUERIDA');
+
+    // Jefe inmediato y prueba técnica son exclusivos de Staff: un Agente no
+    // las usa (tiene la evaluación de 5 criterios, ver arriba).
+    const jefe = await request(app)
+      .post(`/api/seleccion/candidatos/${id}/aprobacion-jefe-inmediato`)
+      .set(auth('seleccion'))
+      .send({ aprobacion: true });
+    expect(jefe.status).toBe(409);
+    expect(jefe.body.error.codigo).toBe('APROBACION_JEFE_INMEDIATO_NO_APLICA');
   });
 });
 

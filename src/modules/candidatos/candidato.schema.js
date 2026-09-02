@@ -86,6 +86,9 @@ const listar = z.object({
   // seleccion.service.js): por texto, no por catálogo cerrado, para cubrir
   // 'Agente', 'Agente Plus', 'Agente Call Center' y cualquier variante futura.
   agentes: z.coerce.boolean().optional(),
+  // Contraparte de "agentes": todo cargo que NO sea Agente ("Candidatos
+  // Staff" del menú lateral, decisión de negocio 2026-09-02).
+  staff: z.coerce.boolean().optional(),
   ordenarPor: z.enum(['created_at', 'updated_at', 'primer_apellido']).default('created_at'),
   direccion: z.enum(['asc', 'desc']).default('desc'),
 });

@@ -43,6 +43,31 @@ const decidir = z.object({
   razon: z.string().trim().min(3).max(2000).optional(),
 });
 
+const aprobarEntrevista = z.object({
+  aprobacion: z.boolean(),
+  razon: z.string().trim().min(3).max(2000).optional(),
+});
+
+const citarFormacion = z.object({
+  citado: z.boolean(),
+  razon: z.string().trim().min(3).max(2000).optional(),
+});
+
+const aprobarJefeInmediato = z.object({
+  aprobacion: z.boolean(),
+  razon: z.string().trim().min(3).max(2000).optional(),
+});
+
+const aprobarPruebaTecnica = z.object({
+  aprobacion: z.boolean(),
+  razon: z.string().trim().min(3).max(2000).optional(),
+});
+
+const registrarContratacion = z.object({
+  contratado: z.boolean(),
+  razon: z.string().trim().min(3).max(2000).optional(),
+});
+
 const listarAgenda = z.object({
   pagina: z.coerce.number().int().min(1).default(1),
   porPagina: z.coerce.number().int().min(1).max(100).default(20),
@@ -112,10 +137,63 @@ function crearSeleccionRutas({ seleccionServicio, autenticar }) {
   );
 
   router.post(
+    // Paso previo e informativo a la decisión final, para Agente y Staff (ver
+    // seleccion.service.js::aprobarEntrevista). Mismo permiso que "Decidir":
+    // lo hace el mismo actor, un paso antes.
+    '/candidatos/:id/aprobacion-entrevista',
+    requierePermiso('tomar_decision_final'),
+    validar({ params, body: aprobarEntrevista }),
+    async (req, res) =>
+      ok(res, await seleccionServicio.aprobarEntrevista(req.params.id, req.body, req.usuario))
+  );
+
+  router.post(
+    // Paso previo e informativo a la decisión final, solo Staff (ver
+    // seleccion.service.js::aprobarJefeInmediato).
+    '/candidatos/:id/aprobacion-jefe-inmediato',
+    requierePermiso('tomar_decision_final'),
+    validar({ params, body: aprobarJefeInmediato }),
+    async (req, res) =>
+      ok(res, await seleccionServicio.aprobarJefeInmediato(req.params.id, req.body, req.usuario))
+  );
+
+  router.post(
+    // Paso previo e informativo a la decisión final, solo Staff (ver
+    // seleccion.service.js::aprobarPruebaTecnica).
+    '/candidatos/:id/aprobacion-prueba-tecnica',
+    requierePermiso('tomar_decision_final'),
+    validar({ params, body: aprobarPruebaTecnica }),
+    async (req, res) =>
+      ok(res, await seleccionServicio.aprobarPruebaTecnica(req.params.id, req.body, req.usuario))
+  );
+
+  router.post(
     '/candidatos/:id/decision-final',
     requierePermiso('tomar_decision_final'),
     validar({ params, body: decidir }),
     async (req, res) => ok(res, await seleccionServicio.decidir(req.params.id, req.body, req.usuario))
+  );
+
+  router.post(
+    // Paso posterior e informativo a la decisión final aprobada, solo cargo
+    // Agente (ver seleccion.service.js::citarFormacion). Mismo permiso que
+    // "Decidir".
+    '/candidatos/:id/citacion-formacion',
+    requierePermiso('tomar_decision_final'),
+    validar({ params, body: citarFormacion }),
+    async (req, res) =>
+      ok(res, await seleccionServicio.citarFormacion(req.params.id, req.body, req.usuario))
+  );
+
+  router.post(
+    // Paso posterior e informativo a la decisión final aprobada, solo Staff
+    // (ver seleccion.service.js::registrarContratacion). Contraparte de
+    // "citar a formación" para Agente.
+    '/candidatos/:id/contratacion',
+    requierePermiso('tomar_decision_final'),
+    validar({ params, body: registrarContratacion }),
+    async (req, res) =>
+      ok(res, await seleccionServicio.registrarContratacion(req.params.id, req.body, req.usuario))
   );
 
   router.get(
