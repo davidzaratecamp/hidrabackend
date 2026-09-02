@@ -14,13 +14,19 @@
  * mutaciones, y se puede probar sola.
  */
 
-const PERMISO_VER_TODO = 'ver_perfiles_completos';
+const PERMISO_VER_TODO = 'ver_candidatos_todos';
 
 /**
  * ¿Este usuario ve candidatos ajenos?
  *
  * Se decide por permiso y no por rol: así, dar visibilidad total a un rol nuevo
  * es marcar una casilla en `rol_permisos`, no tocar código.
+ *
+ * Permiso separado de `ver_perfiles_completos` (decisión de negocio,
+ * 2026-09-02): todos los roles ven el listado completo, pero
+ * `ver_perfiles_completos` sigue controlando aparte quién ve valoración
+ * psicológica/evaluación en histórico y trazabilidad — no todo el que ve el
+ * listado debe ver esos datos.
  */
 function veTodos(usuario) {
   return usuario.permisos.includes(PERMISO_VER_TODO);
