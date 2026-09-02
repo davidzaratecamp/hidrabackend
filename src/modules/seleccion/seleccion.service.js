@@ -131,6 +131,47 @@ function crearSeleccionServicio({
       return { citacionId: citacion.id, asistio, estado: destino };
     },
 
+    /**
+     * Seguimiento antes de la entrevista: registra si el candidato respondió
+     * la llamada y/o el mensaje de WhatsApp/Global de confirmación. Ambos
+     * canales son independientes y opcionales — se puede guardar el resultado
+     * de uno sin conocer todavía el del otro.
+     */
+    async registrarSeguimiento(candidatoId, { llamada, whatsapp }, usuario) {
+      await candidatoServicio.obtenerAccesible(candidatoId, usuario);
+
+      const citacion = await seleccionRepo.citacionPendiente(candidatoId);
+      if (!citacion) {
+        throw HttpError.conflicto('El candidato no tiene una citación pendiente', {
+          codigo: 'SIN_CITACION_PENDIENTE',
+        });
+      }
+
+      const actualizada = await seleccionRepo.registrarSeguimiento(citacion.id, { llamada, whatsapp });
+      if (!actualizada) {
+        throw HttpError.conflicto('Esa citación ya fue resuelta', { codigo: 'CITACION_RESUELTA' });
+      }
+
+      const fresca = await seleccionRepo.citacionPendiente(candidatoId);
+      return {
+        citacionId: fresca.id,
+        llamada: fresca.seguimiento_llamada,
+        whatsapp: fresca.seguimiento_whatsapp,
+      };
+    },
+
+    /** Estado actual del seguimiento de la citación pendiente del candidato. */
+    async seguimientoActual(candidatoId, usuario) {
+      await candidatoServicio.obtenerAccesible(candidatoId, usuario);
+      const citacion = await seleccionRepo.citacionPendiente(candidatoId);
+      if (!citacion) return null;
+      return {
+        citacionId: citacion.id,
+        llamada: citacion.seguimiento_llamada,
+        whatsapp: citacion.seguimiento_whatsapp,
+      };
+    },
+
     async criterios() {
       return seleccionRepo.criteriosActivos();
     },

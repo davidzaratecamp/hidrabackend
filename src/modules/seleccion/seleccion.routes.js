@@ -27,6 +27,17 @@ const evaluar = z.object({
   razonRechazo: z.string().trim().min(3).max(2000).optional(),
 });
 
+const seguimiento = z
+  .object({
+    // Ambos opcionales e independientes: se puede registrar el resultado de
+    // un solo canal sin tocar el otro (ver seleccion.repository.js::registrarSeguimiento).
+    llamada: z.boolean().optional(),
+    whatsapp: z.boolean().optional(),
+  })
+  .refine((d) => d.llamada !== undefined || d.whatsapp !== undefined, {
+    message: 'Debes indicar el resultado de al menos un canal',
+  });
+
 const decidir = z.object({
   aprobacion: z.boolean(),
   razon: z.string().trim().min(3).max(2000).optional(),
@@ -75,6 +86,22 @@ function crearSeleccionRutas({ seleccionServicio, autenticar }) {
     validar({ params, body: asistencia }),
     async (req, res) =>
       ok(res, await seleccionServicio.marcarAsistencia(req.params.id, req.body, req.usuario))
+  );
+
+  router.get(
+    '/candidatos/:id/seguimiento',
+    requierePermiso('ver_candidatos'),
+    validar({ params }),
+    async (req, res) =>
+      ok(res, await seleccionServicio.seguimientoActual(req.params.id, req.usuario))
+  );
+
+  router.post(
+    '/candidatos/:id/seguimiento',
+    requierePermiso('registrar_asistencia'),
+    validar({ params, body: seguimiento }),
+    async (req, res) =>
+      ok(res, await seleccionServicio.registrarSeguimiento(req.params.id, req.body, req.usuario))
   );
 
   router.post(

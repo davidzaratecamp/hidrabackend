@@ -50,6 +50,7 @@ function crearSeleccionRepositorio({ db }) {
   async function citacionesDe(candidatoId) {
     const [filas] = await db.query(
       `SELECT c.id, c.created_at AS fecha_citado, c.asistio, c.fecha_asistencia, c.observaciones,
+              c.seguimiento_llamada, c.seguimiento_whatsapp,
               mi.nombre AS motivo_inasistencia, c.motivo_inasistencia_detalle,
               ag.nombre_completo AS agendado_por, rg.nombre_completo AS registrado_por
          FROM candidato_citaciones c
@@ -70,6 +71,26 @@ function crearSeleccionRepositorio({ db }) {
               motivo_inasistencia_detalle = ?, observaciones = ?, registrado_por_id = ?
         WHERE id = ? AND asistio = 'pendiente'`,
       [asistio, motivoId ?? null, detalle ?? null, observaciones ?? null, registradoPorId, citacionId]
+    );
+    return res.affectedRows > 0;
+  }
+
+  /**
+   * Seguimiento antes de la entrevista: si el candidato respondió la llamada
+   * y/o el mensaje de WhatsApp/Global de confirmación.
+   *
+   * `llamada`/`whatsapp` son independientes entre sí y opcionales: se puede
+   * registrar el resultado de un solo canal sin tocar el otro (COALESCE deja
+   * intacto el que no se manda). Solo aplica mientras la citación sigue
+   * pendiente, igual que `registrarAsistencia`.
+   */
+  async function registrarSeguimiento(citacionId, { llamada, whatsapp }) {
+    const [res] = await db.query(
+      `UPDATE candidato_citaciones
+          SET seguimiento_llamada = COALESCE(?, seguimiento_llamada),
+              seguimiento_whatsapp = COALESCE(?, seguimiento_whatsapp)
+        WHERE id = ? AND asistio = 'pendiente'`,
+      [llamada ?? null, whatsapp ?? null, citacionId]
     );
     return res.affectedRows > 0;
   }
@@ -218,7 +239,7 @@ function crearSeleccionRepositorio({ db }) {
   }
 
   return {
-    crearCitacion, citacionPendiente, citacionesDe, registrarAsistencia, agenda,
+    crearCitacion, citacionPendiente, citacionesDe, registrarAsistencia, registrarSeguimiento, agenda,
     crearEvaluacion, guardarPuntajes, criteriosActivos, evaluacionConTotal,
     evaluacionesDe, puntajesDe,
     guardarDecisionFinal, decisionFinalDe,
