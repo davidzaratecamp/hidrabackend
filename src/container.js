@@ -203,7 +203,7 @@ function construirContenedor(sobrescrituras = {}) {
     '/api/antecedentes': crearAntecedentesRutas({ antecedentesServicio, autenticar }),
     '/api/trazabilidad': crearTrazabilidadRutas({ trazabilidadRepo, autenticar }),
     '/api/reportes': crearReportesRutas({ reportesRepo, autenticar }),
-    '/api/historico': crearHistoricoRutas({ historicoRepo, autenticar }),
+    '/api/historico': crearHistoricoRutas({ historicoRepo, firma, autenticar }),
     '/api/desprendibles': crearDesprendiblesRutas({ nomina, autenticar }),
   };
 

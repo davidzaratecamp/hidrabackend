@@ -69,6 +69,10 @@ const FILTROS_EXACTOS = Object.freeze({
   cargo: 'c.cargo',
   ciudad: 'c.ciudad',
   reclutadorId: 'c.reclutador_id',
+  // Alerta de duplicado en "Nuevo candidato" (ver candidatos/NuevoCandidato.jsx):
+  // exacto, no LIKE como `busqueda`, para no marcar coincidencia por un
+  // número que solo comparte algunos dígitos.
+  numeroDocumento: 'c.numero_documento',
 });
 
 function crearHistoricoRepositorio({ db }) {

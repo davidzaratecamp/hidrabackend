@@ -24,6 +24,7 @@
  */
 
 const { Router } = require('express');
+const { z } = require('zod');
 const { validar } = require('../../shared/middleware/validar');
 const { requierePermiso } = require('../../shared/middleware/autorizar');
 const { ok, paginado } = require('../../shared/utils/respuesta');
@@ -39,7 +40,7 @@ function ocultarPerfilCompleto(item) {
   return visible;
 }
 
-function crearHistoricoRutas({ historicoRepo, autenticar }) {
+function crearHistoricoRutas({ historicoRepo, firma, autenticar }) {
   const router = Router();
   router.use(autenticar);
 
@@ -114,6 +115,38 @@ function crearHistoricoRutas({ historicoRepo, autenticar }) {
         return ok(res, visible);
       }
       return ok(res, candidato);
+    }
+  );
+
+  /**
+   * Hoja de vida / tratamiento de datos del candidato en FirmaCloud, por
+   * proxy: mismo adaptador `firma` que usa el sistema nuevo
+   * (`formulario.routes.js::crearFirmaRutas`), pero con la referencia que
+   * dejó el sistema VIEJO al enviarlos a firmar
+   * (`hyd_candidatos.firmacloud_signature_id`, migración 008 de
+   * `database/migrations/`) — es el mismo FirmaCloud, solo cambia de dónde
+   * sale la referencia. Nunca se guarda copia acá tampoco.
+   */
+  router.get(
+    '/candidatos/:id/documento/:tipo',
+    requierePermiso('ver_candidatos'),
+    validar({ params: esquema.parametrosId.extend({ tipo: z.enum(['cv', 'tratamiento']) }) }),
+    async (req, res) => {
+      const candidato = await historicoRepo.obtenerPorId(req.params.id);
+      const referencia = candidato?.formularios?.firmacloudSignatureId;
+      if (!referencia) {
+        throw HttpError.noEncontrado(
+          'Este candidato del archivo histórico no tiene documentos en FirmaCloud'
+        );
+      }
+
+      const { contenido, mimeType } = await firma.descargar(referencia, req.params.tipo);
+      res.set('Content-Type', mimeType);
+      res.set(
+        'Content-Disposition',
+        `inline; filename="historico-${req.params.tipo}-${req.params.id}.pdf"`
+      );
+      return res.send(contenido);
     }
   );
 

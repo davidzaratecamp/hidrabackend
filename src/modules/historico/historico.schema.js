@@ -31,6 +31,8 @@ const listar = z
     cargo: texto(100).optional(),
     ciudad: texto(100).optional(),
     reclutadorId: z.coerce.number().int().positive().optional(),
+    /** Igualdad exacta (no LIKE): alerta de duplicado en Nuevo candidato. */
+    numeroDocumento: texto(20).optional(),
 
     /** Rango sobre la fecha de registro, ambos inclusive. */
     desde: fecha.optional(),
