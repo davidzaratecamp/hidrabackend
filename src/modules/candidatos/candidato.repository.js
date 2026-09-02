@@ -30,7 +30,10 @@ const SELECT_BASE = `
          eva.aprobado AS evaluacion_aprobado, eva.razon_rechazo AS evaluacion_razon,
          eva.created_at AS fecha_evaluacion,
          df.aprobacion AS decision_aprobacion, df.razon AS decision_razon,
-         df.created_at AS fecha_decision, psi.nombre_completo AS decision_psicologo
+         df.created_at AS fecha_decision, psi.nombre_completo AS decision_psicologo,
+         -- Seguimiento antes de la entrevista, de la citación pendiente (si
+         -- hay una): alimenta el color del botón "Seguimiento" del listado.
+         cita.seguimiento_llamada, cita.seguimiento_whatsapp
     FROM candidatos c
     JOIN tipos_documento td   ON td.id = c.tipo_documento_id
     JOIN clientes cl          ON cl.id = c.cliente_id
@@ -49,6 +52,12 @@ const SELECT_BASE = `
     LEFT JOIN v_evaluacion_totales ev ON ev.evaluacion_id = eva.id
     LEFT JOIN candidato_decision_final df ON df.candidato_id = c.id
     LEFT JOIN usuarios psi    ON psi.id = df.psicologo_id
+    -- Citación pendiente del candidato, si tiene una: igual que "eva" arriba,
+    -- correlacionada porque la tabla es 1:N (se puede reagendar).
+    LEFT JOIN candidato_citaciones cita
+           ON cita.id = (SELECT ci2.id FROM candidato_citaciones ci2
+                          WHERE ci2.candidato_id = c.id AND ci2.asistio = 'pendiente'
+                          ORDER BY ci2.created_at DESC, ci2.id DESC LIMIT 1)
 `;
 
 function crearCandidatoRepositorio({ db }) {

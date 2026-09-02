@@ -118,6 +118,7 @@ function crearSeleccionRepositorio({ db }) {
 
     const [items] = await db.query(
       `SELECT ci.id AS citacion_id, ci.created_at AS fecha_citado, ci.asistio, ci.fecha_asistencia,
+              ci.seguimiento_llamada, ci.seguimiento_whatsapp,
               c.id AS candidato_id, c.primer_nombre, c.primer_apellido,
               c.numero_documento, c.celular, c.email,
               cl.codigo AS cliente, ca.codigo AS cargo,
