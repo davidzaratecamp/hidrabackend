@@ -30,13 +30,24 @@ const UMBRAL_APROBACION = 71;
 const esCargoAgente = (candidato) => /agente/i.test(candidato.cargo ?? '');
 
 /**
- * Estados donde ya hubo entrevista y todavía no hay decisión final: los
- * únicos donde tiene sentido registrar "aprobación de entrevista". Cubre
- * tanto a Agente (pasa por `evaluar()` primero, así que llega en "aprobado" o
- * "rechazado") como a Staff (sin evaluación de criterios, sigue en
- * "entrevistado" hasta que Selección decide).
+ * Estados donde ya hubo entrevista y tiene sentido registrar "aprobación de
+ * entrevista". Cubre tanto a Agente (pasa por `evaluar()` primero, así que
+ * llega en "aprobado" o "rechazado") como a Staff (sin evaluación de
+ * criterios, sigue en "entrevistado" hasta que Selección decide). Incluye
+ * "aprobado_final" (decisión de negocio, 2026-09-02): si algo quedó mal
+ * guardado, Selección/Administrador debe poder corregirlo también después de
+ * la decisión final, no solo antes — mismo criterio que
+ * `ESTADOS_STAFF_APROBACION_EDITABLE` más abajo.
  */
-const ESTADOS_ENTREVISTA_APROBABLE = ['entrevistado', 'aprobado', 'rechazado'];
+const ESTADOS_ENTREVISTA_APROBABLE = ['entrevistado', 'aprobado', 'rechazado', 'aprobado_final'];
+
+/**
+ * Estados donde Staff puede registrar o corregir la aprobación del jefe
+ * inmediato y de la prueba técnica: mientras está "entrevistado" (antes de
+ * decidir) y después de "aprobado_final" (por si algo quedó mal guardado y
+ * hay que corregirlo — pedido explícito, 2026-09-02).
+ */
+const ESTADOS_STAFF_APROBACION_EDITABLE = ['entrevistado', 'aprobado_final'];
 
 function crearSeleccionServicio({
   seleccionRepo,
@@ -397,13 +408,15 @@ function crearSeleccionServicio({
      * Aprobación del jefe inmediato: paso previo e informativo a la decisión
      * final, solo Staff (cargo distinto a Agente) — la contraparte, para
      * Staff, de la evaluación de 5 criterios que solo aplica a Agente.
+     * También corregible ya con decisión final tomada (ver
+     * ESTADOS_STAFF_APROBACION_EDITABLE).
      */
     async aprobarJefeInmediato(candidatoId, { aprobacion, razon }, usuario) {
       const candidato = await candidatoServicio.obtenerAccesible(candidatoId, usuario);
 
-      if (candidato.estado !== 'entrevistado' || esCargoAgente(candidato)) {
+      if (!ESTADOS_STAFF_APROBACION_EDITABLE.includes(candidato.estado) || esCargoAgente(candidato)) {
         throw HttpError.conflicto(
-          `La aprobación del jefe inmediato solo aplica a un candidato Staff entrevistado, pendiente de decisión final (está en "${candidato.estado}", cargo "${candidato.cargo}")`,
+          `La aprobación del jefe inmediato solo aplica a un candidato Staff entrevistado o aprobado en decisión final (está en "${candidato.estado}", cargo "${candidato.cargo}")`,
           { codigo: 'APROBACION_JEFE_INMEDIATO_NO_APLICA' }
         );
       }
@@ -428,9 +441,9 @@ function crearSeleccionServicio({
     async aprobarPruebaTecnica(candidatoId, { aprobacion, razon }, usuario) {
       const candidato = await candidatoServicio.obtenerAccesible(candidatoId, usuario);
 
-      if (candidato.estado !== 'entrevistado' || esCargoAgente(candidato)) {
+      if (!ESTADOS_STAFF_APROBACION_EDITABLE.includes(candidato.estado) || esCargoAgente(candidato)) {
         throw HttpError.conflicto(
-          `La aprobación de la prueba técnica solo aplica a un candidato Staff entrevistado, pendiente de decisión final (está en "${candidato.estado}", cargo "${candidato.cargo}")`,
+          `La aprobación de la prueba técnica solo aplica a un candidato Staff entrevistado o aprobado en decisión final (está en "${candidato.estado}", cargo "${candidato.cargo}")`,
           { codigo: 'APROBACION_PRUEBA_TECNICA_NO_APLICA' }
         );
       }

@@ -1059,6 +1059,37 @@ describe('Evaluación solo aplica a cargo Agente', () => {
     expect(res.body.datos.contratado).toBe(true);
   });
 
+  it('las tres aprobaciones de Staff se pueden corregir ya con decisión final tomada', async () => {
+    // Este mismo candidatoId ya quedó en aprobado_final (test anterior). Si
+    // algo se guardó mal antes de decidir, Selección debe poder corregirlo
+    // después también (pedido explícito, 2026-09-02).
+    const entrevista = await request(app)
+      .post(`/api/seleccion/candidatos/${candidatoId}/aprobacion-entrevista`)
+      .set(auth('seleccion'))
+      .send({ aprobacion: false, razon: 'Corrección: en realidad no aprobó' });
+    expect(entrevista.status).toBe(200);
+    expect(entrevista.body.datos.aprobacion).toBe(false);
+
+    const jefe = await request(app)
+      .post(`/api/seleccion/candidatos/${candidatoId}/aprobacion-jefe-inmediato`)
+      .set(auth('seleccion'))
+      .send({ aprobacion: true });
+    expect(jefe.status).toBe(200);
+
+    const prueba = await request(app)
+      .post(`/api/seleccion/candidatos/${candidatoId}/aprobacion-prueba-tecnica`)
+      .set(auth('seleccion'))
+      .send({ aprobacion: true });
+    expect(prueba.status).toBe(200);
+
+    // Corregir no mueve el estado: sigue aprobado_final.
+    const perfil = await request(app)
+      .get(`/api/candidatos/${candidatoId}`)
+      .set(auth('seleccion'));
+    expect(perfil.body.datos.estado).toBe('aprobado_final');
+    expect(perfil.body.datos.aprobacion_entrevista).toBe(false);
+  });
+
   it('un candidato Agente NO puede saltarse la evaluación con este mismo atajo', async () => {
     const res = await request(app)
       .post('/api/candidatos')
