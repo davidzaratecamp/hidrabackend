@@ -87,6 +87,23 @@ function crearFirmaCloudHttp({ config, logger }) {
       const contenido = Buffer.from(await respuesta.arrayBuffer());
       return { contenido, mimeType: respuesta.headers.get('content-type') ?? 'application/pdf' };
     },
+
+    /**
+     * Segunda firma (Selección/Administrador) sobre la hoja de vida ya firmada
+     * por el candidato — estampa sobre el campo "PSICÓLOGO" de la plantilla.
+     * `firmadoPor` es el nombre del usuario de Hydra que firma, para el registro
+     * de auditoría del lado de FirmaCloud (nunca viaja como identidad de auth:
+     * Hydra sigue llamando con la misma API key de sistema que el resto de este
+     * puerto).
+     */
+    async firmarPsicologo({ referencia, signatureDataUrl, signatureMode, firmadoPor }) {
+      const respuesta = await pedir(`/reclutamiento/${encodeURIComponent(referencia)}/firmar-psicologo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ signatureDataUrl, signatureMode, firmadoPor }),
+      });
+      return respuesta.json();
+    },
   };
 }
 
@@ -133,6 +150,17 @@ function crearFirmaCloudMemoria({ logger } = {}) {
         contenido: tipo === 'cv' ? envio.cvPdf : envio.tratamientoPdf,
         mimeType: 'application/pdf',
       };
+    },
+
+    async firmarPsicologo({ referencia, signatureDataUrl, signatureMode, firmadoPor }) {
+      const envio = envios.find((e) => e.referencia === referencia);
+      if (!envio) throw HttpError.noEncontrado('Firma no encontrada');
+      envio.psicologoFirmado = true;
+      envio.psicologoFirmadoEn = new Date().toISOString();
+      envio.psicologoFirmadoPor = firmadoPor ?? null;
+      envio.psicologoSignatureMode = signatureMode;
+      envio.psicologoSignatureDataUrl = signatureDataUrl;
+      return { ok: true, message: 'Hoja de vida firmada' };
     },
 
     ultimoDe(nombreCandidato) {

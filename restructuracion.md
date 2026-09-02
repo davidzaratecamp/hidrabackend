@@ -605,7 +605,7 @@ Cada fase es entregable y verificable por separado.
 | 7 | `antecedentes`, `documentos`, `reportes` (Excel) | Subida, descarga y exports, todos con filtro de dueño aplicado | ✅ Hecho — `reportes` creció más allá del Excel: también estadísticas, analíticas y el panel de Selección (ver §11) |
 | 8 | Integraciones: email (con `envios_email`), FirmaCloud, nómina, generación de PDFs | Un fallo de envío se registra y se reporta como fallo, no como éxito | ✅ Hecho |
 | 9 | Frontend reestructurado | Todas las pantallas contra la API nueva | ✅ Hecho — más el rediseño visual completo y los dashboards por rol (ver §11) |
-| 10 | Borrado de lo viejo + endurecimiento + despliegue | `controllers/`, `routes/`, `models/`, `repositories/`, `services/`, `config/*.sql` y los `.sql` sueltos de `database/` eliminados | 🟡 Parcial — el borrado ya pasó en el working tree (`git status` los marca `D`), pero **sigue sin commitear ni desplegar**; el endurecimiento del §8 sigue casi entero sin marcar |
+| 10 | Borrado de lo viejo + endurecimiento + despliegue | `controllers/`, `routes/`, `models/`, `repositories/`, `services/`, `config/*.sql` y los `.sql` sueltos de `database/` eliminados | ✅ **En producción desde 2026-09-01.** Borrado commiteado en ambos repos, backend y frontend desplegados y funcionando en el servidor de producción (ver §11.7). El endurecimiento del §8 sigue mayormente sin marcar — pendiente real, no bloqueante |
 
 **Cobertura de tests priorizada** (fases 3–8): login y RBAC, aislamiento por dueño, transiciones
 del embudo, los 6 pasos del formulario, cálculo de la evaluación, y el relleno del PDF de hoja de
@@ -753,13 +753,82 @@ interacción (crosshair + tooltip) → accesibilidad — sin librería de gráfi
 
 ### 11.6 Pendiente real, no solo lo del §8/§9
 
-- Commitear el borrado de `controllers/`, `routes/`, `models/`, `repositories/`, `services/`,
-  `middleware/`, `database/`, `config/*.sql` (hoy `D` en `git status`, sin commit) — **pendiente a
-  propósito**: se decidió no tocar git hasta revisar el resto de esta entrega.
-- El checklist de endurecimiento del §8 sigue casi entero sin marcar.
+- El checklist de endurecimiento del §8 sigue casi entero sin marcar (salvo `JWT_SECRET` sin
+  fallback, que ya aplica en producción — ver §11.7).
 - Reclutamiento conserva los permisos `agendar_entrevistas`/`registrar_asistencia` pero, desde que
   "Agenda de entrevistas" se ocultó de su menú (§11.1), no tiene un punto de entrada visible en el
   sidebar para citar un candidato — señalado, sin resolver todavía.
+
+### 11.7 Despliegue a producción (2026-09-01)
+
+**La reestructuración completa está en producción**, en el mismo servidor que corría el sistema
+viejo (`hydraos@...`, `/var/www/noviembrehidra/`). Corte hecho en un solo día, sin ventana de
+mantenimiento formal — quedó una franja corta con el backend nuevo arriba y el frontend viejo
+todavía desplegado, que se cerró subiendo el frontend nuevo enseguida.
+
+**Base de datos.** Se creó `ReclutamientoNuevo` (no `hidra`: se mantuvo el nombre que ya usaba el
+`.env` de desarrollo, por consistencia — ver nota en `db/produccion-inicial.sql`) aplicando ese
+archivo consolidado completo vía MySQL Workbench. `noviembrehidra` sigue intacta, sin tocar, tal
+como exige §4.9. Detalle operativo no trivial: la cuenta `root@'%'` (la que usa una conexión remota
+como Workbench) tenía privilegios acotados solo a `noviembrehidra` — `GRANT USAGE ON *.*` nada más
+en el resto —, distinta de `root@localhost` (la de la sesión SSH), que sí tiene privilegios globales.
+Hubo que hacer `GRANT ALL PRIVILEGES ON ReclutamientoNuevo.* TO 'root'@'%'` antes de que Workbench
+pudiera ver la base nueva. Vale la pena recordar esto la próxima vez que haga falta una conexión
+remota a esta base.
+
+**Usuario administrador real.** `admin@hidra.com`, contraseña generada aleatoriamente para esta
+entrega (no la `Hidra2026*` de `db/seeds/004_usuario_admin.sql`, que es pública). **Pendiente:
+rotarla desde la aplicación** — se generó y se mostró una sola vez, ya quedó en el historial de esta
+conversación y en el `.env` de producción no debería estar, así que hay que cambiarla apenas se
+pueda.
+
+**Backend — `.env` de producción.** `DB_NAME=ReclutamientoNuevo`, `DB_HISTORICO_NAME=noviembrehidra`,
+`JWT_SECRET` nuevo generado (32+ caracteres aleatorios — el fallback hardcodeado que exigía §8 ya no
+aplica, esta variable es obligatoria y sin default en `src/config/env.js`), resto de credenciales
+(email, FirmaCloud, nómina) heredadas del `.env` viejo. Sigue corriendo como `DB_USER=root` sin
+usuario dedicado — pendiente real de §8, no se resolvió en este corte.
+
+**PM2 apuntaba al archivo equivocado.** La definición de PM2 (`pm2 start ...`) seguía apuntando a
+`index.js`, el entrypoint del sistema viejo, que el commit de este documento borró. Después del
+`git pull` en el servidor, PM2 entró en crash-loop (`MODULE_NOT_FOUND`, "too many unstable restarts")
+hasta que se recreó apuntando al entrypoint correcto:
+
+```bash
+pm2 delete hidra-backend
+pm2 start src/server.js --name hidra-backend
+pm2 save
+```
+
+**Frontend — build sin `VITE_API_URL`.** El primer `npm run build` en el servidor se hizo sin
+`.env.production`, así que el bundle quedó con el default de desarrollo
+(`http://localhost:3000/api`) horneado adentro — Vite reemplaza `import.meta.env.VITE_API_URL` en
+tiempo de compilación, no de ejecución. Como "localhost" en el navegador del usuario es su propia PC,
+esto daba `ERR_CONNECTION_REFUSED` al hacer login. La configuración de nginx ya existente
+(`/etc/nginx/sites-enabled/noviembrehidra`) resultó tener justo lo necesario: sirve `dist/` en `/` y
+ya reenvía `location /api/ { proxy_pass http://localhost:3000; }`. La corrección fue usar ese proxy
+en vez de pegarle al puerto 3000 directo:
+
+```bash
+# en /var/www/noviembrehidra/frontend
+echo 'VITE_API_URL=/api' > .env.production
+npm run build
+```
+
+Con `VITE_API_URL=/api` (ruta relativa) el frontend y el backend quedan en el mismo origen desde el
+punto de vista del navegador — sin problema de CORS y sin depender de que el puerto 3000 esté
+abierto al exterior. Preferible a la URL absoluta con IP que usaba el sistema viejo
+(`http://200.91.204.54:3000/api`, documentada en §6): si el dominio o la IP cambian, no hay que
+recompilar el frontend.
+
+**Verificado tras el corte:** login funcional desde el frontend nuevo contra el backend nuevo, con
+la base `ReclutamientoNuevo` para escritura y `noviembrehidra` para consulta histórica, ambas
+conexiones confirmadas en el log de arranque (`"Conexión a MySQL verificada"`,
+`"Conexión a la base histórica verificada"`).
+
+**Resuelto 2026-09-01 (tercera ronda):** ~~Commitear el borrado de `controllers/`, `routes/`,
+`models/`, `repositories/`, `services/`, `middleware/`, `database/`, `config/*.sql`~~ — commiteado en
+`hidrabackend` (`main`, commit `cd692d3`) y en `hidrafrontend` (`sebas-branch`, commit `62df7ff`), y
+desplegado a producción (ver §11.7).
 
 **Resuelto 2026-09-01 (segunda ronda):**
 - ~~`tests/integracion/reportes.test.js` tiene un helper desalineado con el cambio de §11.1~~ —
@@ -786,3 +855,81 @@ interacción (crosshair + tooltip) → accesibilidad — sin librería de gráfi
   que un `node db/migrate.js` posterior contra esa base no reintente aplicar nada. Verificado de punta
   a punta contra una base MySQL real: crea las 52 tablas, el admin generado inicia sesión con sus 21
   permisos, y `node db/migrate.js --estado` reconoce las 9 migraciones como aplicadas.
+
+### 11.8 Funcionalidad nueva y correcciones post-despliegue (2026-09-01, segunda mitad del día)
+
+Todo lo de esta sección se construyó **después** de que la reestructuración ya estaba en producción
+(§11.7), como trabajo normal sobre el sistema nuevo — no como parte de la migración. Se agrupa acá
+por la misma razón que el resto de §11: para no tener que releer sesiones viejas.
+
+**Bug real en Desprendibles, encontrado por un usuario en producción.** El módulo de nómina
+(`src/modules/desprendibles/`) tenía dos regresiones de la reescritura del frontend, comparado con el
+componente viejo (`DesprendiblesPage.jsx`, ya borrado pero recuperable del historial de git):
+
+- `normalizar()` en `Desprendibles.jsx` leía `respuesta.meses`, pero la API externa de nómina
+  (IntraCar) devuelve el arreglo bajo `respuesta.data` — por eso la pantalla siempre mostraba "No hay
+  desprendibles disponibles" aunque la API sí tuviera datos.
+- Intentaba convertir `mes` a número (`Number("septiembre")`), pero la API lo manda como nombre en
+  español, no `1-12` — el viejo componente ya sabía esto y pasaba el valor tal cual.
+- Espejo en el backend: `desprendibles.routes.js` forzaba `mes: z.coerce.number().min(1).max(12)` en
+  la ruta de descarga; se cambió a `z.string().min(1)`, porque hay que reenviarle a la API externa el
+  mismo texto que vino de `/meses`.
+
+De paso se rediseñó la pantalla: pasó de una lista angosta (`max-w-2xl`) a un grid de tarjetas más
+grandes (icono de documento en área con degradado, hasta 4 columnas), con un botón "Ver" nuevo que
+abre el PDF en un modal (reutiliza `ModalDocumento`, el mismo que ya usan antecedentes y firma) además
+de "Descargar".
+
+**Scroll propio en la columna "Perfil" de Base histórica.** Un perfil largo estiraba toda la fila de
+la tabla. La celda ahora tiene `max-h-20 overflow-y-auto` — altura fija, scroll interno, la fila no se
+deforma.
+
+**Seguimiento de asistencia antes de la entrevista** (candidato citado, pendiente de resolver). Nueva
+migración `db/migrations/010_seguimiento_citacion.sql` — **aplicada solo en local, todavía no en
+producción** —, dos columnas en `candidato_citaciones`: `seguimiento_llamada`, `seguimiento_whatsapp`
+(BOOLEAN NULL, independientes entre sí, mismo patrón que `candidatos.contacto_llamada`/
+`contacto_whatsapp`). `GET`/`POST /api/seleccion/candidatos/:id/seguimiento`, actualiza uno o ambos
+sin pisar el otro (`COALESCE` en el UPDATE), solo mientras la citación sigue pendiente. En el
+frontend: botón "Seguimiento" junto a "Asistencia" (en Candidatos → Citado y en Agenda → Pendientes),
+modal con dos toggles Sí/No que trae precargado lo ya guardado, y un resultado combinado —
+`resultadoSeguimiento()` en `ui/formato.js` — que es "Sí" si respondió por cualquiera de los dos
+canales, "No" solo si se agotaron los dos sin respuesta, "Pendiente" mientras falte alguno. El botón
+"Seguimiento" de la tabla se pinta verde/rojo según ese resultado (`claseBotonSeguimiento()`, con `!`
+para ganarle a la variante "secundario" de `Boton`).
+
+**Re-citar a quien no asistió.** La máquina de estados ya tenía la transición `no_asistio -> citado`
+("se reagenda", `db/seeds/002_estados_y_transiciones.sql`) desde el diseño original — no hizo falta
+tocar el backend, solo faltaba el punto de entrada en la interfaz. Pestaña "No Asistió" agregada a
+`SIEMPRE_VISIBLES` en Candidatos, justo al lado de "Citado" (el catálogo ya los ordena consecutivos:
+100 y 110). Botón "Citar" (en Candidatos y en Agenda) abre `ModalRecitar`, que llama al mismo endpoint
+de citar por primera vez.
+
+**Bug de sincronización: los conteos de las pestañas no se actualizaban.** En `ListaCandidatos.jsx`,
+la tabla y los conteos de las pestañas ("Citado 3", "No Asistió 2") son dos peticiones independientes
+(dos `useRecurso`). Cerrar un modal que cambia el estado de un candidato (Asistencia, Recitar,
+Evaluar) solo refrescaba la tabla — los conteos quedaban desactualizados hasta un F5 manual. Corregido
+con una `recargarTodo()` que refresca ambas.
+
+**Alerta de duplicado contra la base histórica, al registrar un candidato.** En "Nuevo candidato",
+mientras se escribe el número de documento (con espera de 400ms), se busca coincidencia EXACTA en el
+archivo histórico (`numeroDocumento` se agregó a `FILTROS_EXACTOS` en `historico.repository.js` — es
+igualdad exacta, no el `LIKE` que ya usaba la búsqueda libre `q`, para no marcar coincidencia por un
+número que solo comparte algunos dígitos). Si hay coincidencia, aparece una alerta ámbar (no bloquea
+el registro) con un botón "Ver perfil" que abre `ModalPerfilHistorico` — nuevo, en
+`components/historico/`, con identificación, proceso, perfil/observaciones y, si el usuario tiene
+`ver_perfiles_completos`, el bloque de selección (antecedentes, evaluación, decisión final).
+
+Ese mismo modal, si el candidato histórico tiene `firmacloudSignatureId` (columna
+`hyd_candidatos.firmacloud_signature_id` del sistema viejo, migración 008 de `database/migrations/`),
+muestra botones para ver su hoja de vida y tratamiento de datos firmados. Nuevo endpoint
+`GET /api/historico/candidatos/:id/documento/:tipo`, que reutiliza **el mismo adaptador `firma`** que
+ya usa el sistema nuevo (`firma.descargar(referencia, tipo)`) — mismo FirmaCloud, la única diferencia
+es de dónde sale la referencia. Verificado contra las dos únicas referencias reales que hay en el
+archivo histórico: ambas devuelven 404 del proveedor (parecen registros de prueba viejos, nunca
+completados o purgados) — no es un bug del código, y el modal lo muestra como un error claro en vez de
+romperse. El mecanismo es idéntico al que ya funciona a diario para candidatos del sistema nuevo.
+
+**Pendiente real de esta sección:**
+- Aplicar `db/migrations/010_seguimiento_citacion.sql` en producción (`node db/migrate.js`) — hoy solo
+  está en local.
+- Todo lo de §11.8 sigue sin commitear al cierre de esta sesión (ver también §11.6).

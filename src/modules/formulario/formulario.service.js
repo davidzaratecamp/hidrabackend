@@ -370,6 +370,27 @@ function crearFormularioServicio({
     },
 
     /**
+     * Segunda firma (Selección/Administrador) sobre la hoja de vida ya firmada
+     * por el candidato. `firmadoPor` sale del usuario autenticado de esta misma
+     * sesión, nunca de lo que mande el cliente — mismo criterio que el total de
+     * la evaluación de entrevista (`seleccion.service.js`), que tampoco se
+     * confía al cliente.
+     */
+    async firmarHojaVida(candidatoId, { signatureDataUrl, signatureMode }, usuario) {
+      await candidatoServicio.obtenerAccesible(candidatoId, usuario);
+      const registro = await formularioRepo.buscarFirma(candidatoId);
+      if (!registro) {
+        throw HttpError.noEncontrado('Este candidato no tiene documentos enviados a firma');
+      }
+      return firma.firmarPsicologo({
+        referencia: registro.referencia_externa,
+        signatureDataUrl,
+        signatureMode,
+        firmadoPor: usuario.nombreCompleto,
+      });
+    },
+
+    /**
      * Lo que el candidato llenó en sus 6 pasos, para el perfil del reclutador.
      * Reusa la misma consulta que arma el PDF (`obtenerCompleto`): ya trae
      * estudios[]/experiencia[] normalizados (todos los niveles, todos los

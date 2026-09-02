@@ -76,6 +76,22 @@ function crearFirmaRutas({ formularioServicio, autenticar }) {
     ok(res, await formularioServicio.reenviarAFirmar(req.params.id, req.usuario))
   );
 
+  const firmarHojaVida = z.object({
+    signatureDataUrl: z.string().startsWith('data:image/png;base64,'),
+    signatureMode: z.enum(['draw', 'font']),
+  });
+
+  // Segunda firma (Selección/Administrador) sobre la hoja de vida ya firmada por el candidato.
+  // El router ya exige `ver_candidatos` arriba (router.use); este middleware adicional exige
+  // ADEMÁS `firmar_hoja_vida` — ambos deben cumplirse.
+  router.post(
+    '/:id/firmar-hoja-vida',
+    requierePermiso('firmar_hoja_vida'),
+    validar({ params, body: firmarHojaVida }),
+    async (req, res) =>
+      ok(res, await formularioServicio.firmarHojaVida(req.params.id, req.body, req.usuario))
+  );
+
   return router;
 }
 
