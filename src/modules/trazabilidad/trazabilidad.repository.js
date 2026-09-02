@@ -237,8 +237,17 @@ function crearTrazabilidadRepositorio({ db }) {
    * puede ver a todos los reclutadores.
    */
   async function equipo() {
+    // `h.candidato_id IS NOT NULL` es necesario porque este es un LEFT JOIN:
+    // un reclutador sin ningún registro igual produce una fila (con `h` en
+    // NULL) para que aparezca en la comparativa con cartera_actual = 0. La
+    // condición 'total' de PERIODOS es '1 = 1' —no referencia `h.created_at`—
+    // así que sin este guard esa fila fantasma contaría como "1 creado" para
+    // todo el mundo, con role reclutamiento, sin importar si registró algo.
     const columnas = Object.keys(PERIODOS)
-      .map((p) => `SUM(CASE WHEN ${condicion(p, 'h.created_at')} THEN 1 ELSE 0 END) AS creados_${p}`)
+      .map(
+        (p) =>
+          `SUM(CASE WHEN h.candidato_id IS NOT NULL AND ${condicion(p, 'h.created_at')} THEN 1 ELSE 0 END) AS creados_${p}`
+      )
       .join(', ');
 
     const [filas] = await db.query(
