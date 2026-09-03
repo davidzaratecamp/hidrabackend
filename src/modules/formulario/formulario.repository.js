@@ -262,12 +262,12 @@ function crearFormularioRepositorio({ db }) {
   }
 
   // -------------------------------------------------------------- paso 6 ----
-  async function guardarConsentimiento(candidatoId, { ciudadId, fecha }) {
+  async function guardarConsentimiento(candidatoId, { ciudad, fecha }) {
     await db.query(
-      `INSERT INTO candidato_consentimiento (candidato_id, ciudad_id, fecha)
+      `INSERT INTO candidato_consentimiento (candidato_id, ciudad, fecha)
        VALUES (?,?,?)
-       ON DUPLICATE KEY UPDATE ciudad_id = VALUES(ciudad_id), fecha = VALUES(fecha)`,
-      [candidatoId, ciudadId ?? null, fecha]
+       ON DUPLICATE KEY UPDATE ciudad = VALUES(ciudad), fecha = VALUES(fecha)`,
+      [candidatoId, ciudad ?? null, fecha]
     );
   }
 
@@ -358,9 +358,8 @@ function crearFormularioRepositorio({ db }) {
     );
 
     const [[consentimientoFila]] = await db.query(
-      `SELECT co.fecha, ci.codigo AS ciudad
+      `SELECT co.fecha, co.ciudad
          FROM candidato_consentimiento co
-         LEFT JOIN ciudades ci ON ci.id = co.ciudad_id
         WHERE co.candidato_id = ?`,
       [candidatoId]
     );
@@ -452,7 +451,7 @@ function crearFormularioRepositorio({ db }) {
               er.experiencia_comercial_certificada, er.experiencia_comercial_no_certificada,
               er.primer_empleo_formal, er.fecha_inicio_asiste, er.fecha_retiro_asiste,
               er.motivo_retiro_asiste, cla.codigo AS campana_asiste,
-              cons.fecha AS fecha_consentimiento, cc.codigo AS ciudad_consentimiento,
+              cons.fecha AS fecha_consentimiento, cons.ciudad AS ciudad_consentimiento,
               (SELECT MAX(t.enviado_en) FROM candidato_tokens_formulario t
                 WHERE t.candidato_id = c.id) AS fecha_envio_email
          FROM candidatos c
@@ -474,7 +473,6 @@ function crearFormularioRepositorio({ db }) {
          LEFT JOIN candidato_experiencia_resumen er ON er.candidato_id = c.id
          LEFT JOIN clientes cla ON cla.id = er.campana_asiste_id
          LEFT JOIN candidato_consentimiento cons ON cons.candidato_id = c.id
-         LEFT JOIN ciudades cc ON cc.id = cons.ciudad_id
         WHERE c.id = ?`,
       [candidatoId]
     );

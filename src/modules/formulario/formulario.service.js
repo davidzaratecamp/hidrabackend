@@ -312,13 +312,12 @@ function crearFormularioServicio({
         });
       }
 
-      const ciudadId = await idOpcional('ciudades', datos.ciudad);
       const candidato = await candidatoRepo.buscarPorId(candidatoId);
 
       // Consentimiento, cierre del token, avance de estado: un solo hecho.
       await uow.ejecutar(async (repos) => {
         await repos.formularioRepo.guardarConsentimiento(candidatoId, {
-          ciudadId,
+          ciudad: datos.ciudad,
           fecha: datos.fecha,
         });
         await repos.formularioRepo.marcarPaso(candidatoId, 'consentimiento');

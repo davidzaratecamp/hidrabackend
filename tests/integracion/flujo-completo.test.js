@@ -387,6 +387,12 @@ describe('Flujo completo del embudo de reclutamiento', () => {
 
     const datos = await request(app).put(`${base}/datos-basicos`).send({
       nombreCompleto: 'Laura Sofía Restrepo Gómez',
+      // Obligatorios desde la decisión de negocio 2026-09-03: en la interfaz
+      // real ya vienen precargados del registro (ver FormularioCandidato.jsx),
+      // pero esta prueba llama al endpoint directo, sin ese precargado.
+      numeroDocumento: String(sufijo).slice(-10),
+      celular: '3001234567',
+      edad: 27,
       fechaNacimiento: '1998-05-14',
       estadoCivil: 'soltero',
       genero: 'femenino',
@@ -451,6 +457,12 @@ describe('Flujo completo del embudo de reclutamiento', () => {
       estadoSaludActual: 'Buena',
       tratamientoPsicologicoActual: false,
       autoevaluacion: 4,
+      // Obligatorios desde la decisión de negocio 2026-09-03 (antes solo se
+      // mandaban desde el paso "experiencia"; el paso "personal" también los
+      // acepta — ver comentario en formulario.schema.js::personal).
+      experienciaComercialCertificada: true,
+      experienciaComercialNoCertificada: false,
+      primerEmpleoFormal: false,
       metas: { corto: 'Estabilidad laboral', mediano: 'Terminar profesional', largo: 'Liderar un equipo' },
       conocimientos: [
         { herramienta: 'excel', nivel: 4 },
@@ -471,10 +483,70 @@ describe('Flujo completo del embudo de reclutamiento', () => {
     expect(res.body.error.codigo).toBe('BACHILLERATO_REQUERIDO');
   });
 
+  it('6c. "datos personales" rechaza si falta un campo, ahora obligatorio', async () => {
+    const res = await request(app)
+      .put(`/api/formulario/${tokenFormulario}/datos-basicos`)
+      .send({
+        nombreCompleto: 'Laura Sofía Restrepo Gómez',
+        numeroDocumento: String(sufijo).slice(-10),
+        celular: '3001234567',
+        edad: 27,
+        estadoCivil: 'soltero',
+        grupoSanguineo: 'O+',
+        eps: 'Sura EPS',
+        afp: 'Porvenir',
+        tallaCamisa: 'M',
+        direccionResidencial: 'Calle 100 # 15-20',
+        // Sin "barrio": debe rechazar.
+        nombreEmergencia: 'Marta Gómez',
+        numeroEmergencia: '3109876543',
+        parentescoEmergencia: 'madre',
+      });
+    expect(res.status).toBe(400);
+  });
+
+  it('6d. "sobre ti" rechaza si falta uno de los Sí/No, ahora obligatorios', async () => {
+    const res = await request(app)
+      .put(`/api/formulario/${tokenFormulario}/personal`)
+      .send({
+        genograma: 'x', fortalezas: 'x', aspectosMejorar: 'x', competenciasLaborales: 'x',
+        estadoSaludActual: 'x', autoevaluacion: 4,
+        metas: { corto: 'x', mediano: 'x', largo: 'x' },
+        conocimientos: [{ herramienta: 'excel', nivel: 3 }],
+        experienciaComercialCertificada: true,
+        experienciaComercialNoCertificada: false,
+        // Sin "primerEmpleoFormal": debe rechazar.
+      });
+    expect(res.status).toBe(400);
+  });
+
+  it('6e. "experiencia laboral" rechaza si el primer bloque queda incompleto', async () => {
+    const res = await request(app)
+      .put(`/api/formulario/${tokenFormulario}/experiencia`)
+      .send({ experiencias: [{ orden: 1, nombreEmpresa: 'Solo el nombre, sin cargo ni fecha' }] });
+    expect(res.status).toBe(400);
+  });
+
+  // "Anterior empleo" (segundo bloque) opcional: ya lo prueba el paso "6"
+  // de arriba, que lo manda sin ningún dato y el backend lo acepta — no se
+  // repite acá con un envío nuevo para no pisar (`reemplazarExperiencias` no
+  // hace merge parcial) los datos completos que la prueba "7b-bis" necesita
+  // más abajo.
+
+  it('6g. "autorización de datos" rechaza sin ciudad', async () => {
+    const res = await request(app)
+      .put(`/api/formulario/${tokenFormulario}/consentimiento`)
+      .send({ fecha: '2026-08-28', aceptado: true });
+    expect(res.status).toBe(400);
+  });
+
   it('7. al aceptar el consentimiento se estampan los PDF y se envían a firma', async () => {
     const res = await request(app)
       .put(`/api/formulario/${tokenFormulario}/consentimiento`)
-      .send({ ciudad: 'bogota', fecha: '2026-08-28', aceptado: true });
+      // "Cali" a propósito: el catálogo viejo solo tenía Bogotá/Barranquilla
+      // (migración 017, decisión de negocio 2026-09-03) — cualquier texto
+      // debe aceptarse ahora.
+      .send({ ciudad: 'Cali', fecha: '2026-08-28', aceptado: true });
 
     expect(res.status).toBe(200);
     expect(res.body.datos.completado).toBe(true);
@@ -557,7 +629,7 @@ describe('Flujo completo del embudo de reclutamiento', () => {
       conocimientos: { excel: 4, word: 5, powerpoint: 3 },
       metas: { corto: 'Estabilidad laboral' },
     });
-    expect(r.consentimiento).toMatchObject({ ciudad: 'bogota', fecha: '2026-08-28' });
+    expect(r.consentimiento).toMatchObject({ ciudad: 'Cali', fecha: '2026-08-28' });
 
     // Este token viejo ya estaba consumido; el nuevo no se toca, para no
     // interferir con las pruebas 7c en adelante que siguen usando el original.
