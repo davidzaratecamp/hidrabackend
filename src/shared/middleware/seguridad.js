@@ -11,6 +11,7 @@
 const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = require('express-rate-limit');
 const { randomUUID } = require('node:crypto');
 
 const config = require('../../config/env');
@@ -66,6 +67,14 @@ function limiteGeneral() {
  * Límite estricto para el login y otros endpoints sensibles a fuerza bruta.
  * `skipSuccessfulRequests` hace que solo cuenten los intentos fallidos, así que
  * un usuario legítimo no se autobloquea.
+ *
+ * La clave combina IP + email (2026-09-15): toda la oficina sale a internet
+ * por la misma IP pública (ver `restructuracion.md` §11.10), así que contar
+ * solo por IP significa que los intentos fallidos de una persona consumían el
+ * cupo de todo el equipo — cualquiera podía ver "Demasiadas peticiones" sin
+ * haber fallado ni un login propio. Contando por IP+email, cada cuenta tiene
+ * su propio cupo de 10 intentos fallidos; seguir sin poder adivinar la
+ * contraseña de una cuenta ajena sigue protegido igual que antes.
  */
 function limiteAutenticacion() {
   return rateLimit({
@@ -76,6 +85,10 @@ function limiteAutenticacion() {
     skipSuccessfulRequests: true,
     message: mensajeLimite,
     skip: () => config.esPrueba,
+    keyGenerator: (req) => {
+      const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+      return `${ipKeyGenerator(req.ip)}:${email}`;
+    },
   });
 }
 
