@@ -32,7 +32,14 @@ const COLUMNAS = [
   { encabezado: 'FUENTE DE RECLUTAMIENTO', campo: 'fuenteReclutamiento' },
 ];
 
-const OBLIGATORIAS = ['CAMPAÑA', 'CARGO', 'NOMBRE', 'TIPO DE DOCUMENTO', 'CELULAR'];
+// Todas las columnas son obligatorias (decisión de negocio, 2026-09-15): los
+// mismos campos que ahora exige `candidato.schema.js::crear` en el formulario
+// manual. ESTADO GESTIÓN RECLUTAMIENTO queda afuera a propósito: solo aplica
+// cuando CITADO = No (lo valida el `superRefine` del esquema, fila por fila,
+// con un mensaje que dice exactamente en cuál falta).
+const OBLIGATORIAS = COLUMNAS.filter((c) => c.encabezado !== 'ESTADO GESTIÓN RECLUTAMIENTO').map(
+  (c) => c.encabezado
+);
 
 const ENCABEZADO_POR_CAMPO = new Map(COLUMNAS.map((c) => [c.campo, c.encabezado]));
 

@@ -37,6 +37,34 @@ const PASSWORD = 'Hidra2026Segura';
 const sufijo = Date.now();
 const correo = (n) => `${n}.${sufijo}@prueba.local`;
 
+/**
+ * Payload completo y válido para `POST /api/candidatos`, con `overrides` por
+ * encima. Todos los campos del formulario "Nuevo Candidato" son obligatorios
+ * (decisión de negocio, 2026-09-15) — este helper evita repetir los que no
+ * son el foco de cada prueba puntual (p. ej. "3b" solo le interesa el cargo).
+ */
+let contadorCandidatoBase = 0;
+function datosCandidatoBase(overrides = {}) {
+  contadorCandidatoBase += 1;
+  return {
+    nombreCompleto: 'Candidato De Prueba',
+    tipoDocumento: 'CC',
+    numeroDocumento: `${String(sufijo).slice(-9)}${contadorCandidatoBase}`,
+    edad: 25,
+    email: correo(`base-${contadorCandidatoBase}`),
+    celular: '3000000000',
+    contactoLlamada: true,
+    contactoWhatsapp: true,
+    cliente: 'Obamacare',
+    cargo: 'Agente',
+    perfil: 'Perfil de prueba',
+    citado: false,
+    estadoGestion: '#Errado',
+    fuenteReclutamiento: 'Computrabajo',
+    ...overrides,
+  };
+}
+
 let app;
 let email;
 let firma;
@@ -201,6 +229,8 @@ describe('Flujo completo del embudo de reclutamiento', () => {
         // registrar: marcar Citado = Sí lo dejaría citado de entrada y se saltaría
         // los formularios. Ese camino se prueba aparte, en 3d.
         citado: false,
+        // Requerido cuando Citado = No (decisión de negocio, 2026-09-15).
+        estadoGestion: '#Errado',
         ciudad: 'bogota',
         fuenteReclutamiento: 'Computrabajo',
         tipificacionLlamada: 'Interesado',
@@ -231,13 +261,12 @@ describe('Flujo completo del embudo de reclutamiento', () => {
     const res = await request(app)
       .post('/api/candidatos')
       .set(auth('reclutador'))
-      .send({
+      .send(datosCandidatoBase({
         nombreCompleto: 'Cargo Invalido',
-        tipoDocumento: 'CC',
         celular: '3001112222',
         cliente: 'Obamacare',
         cargo: 'Contador', // solo existe para Staff
-      });
+      }));
 
     expect(res.status).toBe(400);
     expect(res.body.error.codigo).toBe('CARGO_NO_DISPONIBLE');
@@ -254,14 +283,13 @@ describe('Flujo completo del embudo de reclutamiento', () => {
     const res = await request(app)
       .post('/api/candidatos')
       .set(auth('reclutador'))
-      .send({
+      .send(datosCandidatoBase({
         nombreCompleto: 'Tipificacion Retirada',
-        tipoDocumento: 'CC',
         celular: '3001113333',
         cliente: 'Obamacare',
         cargo: 'Customer Service',
         tipificacionLlamada: 'Contacto exitoso',
-      });
+      }));
 
     expect(res.status).toBe(400);
     expect(res.body.error.codigo).toBe('CATALOGO_INVALIDO');
@@ -271,15 +299,15 @@ describe('Flujo completo del embudo de reclutamiento', () => {
     const res = await request(app)
       .post('/api/candidatos')
       .set(auth('reclutador'))
-      .send({
+      .send(datosCandidatoBase({
         nombreCompleto: 'Citado Al Registrar',
-        tipoDocumento: 'CC',
         numeroDocumento: `${String(sufijo).slice(-9)}9`,
         celular: '3009998888',
         cliente: 'Obamacare',
         cargo: 'Customer Service',
         citado: true,
-      });
+        estadoGestion: undefined,
+      }));
 
     expect(res.status).toBe(201);
     const id = res.body.datos.id;
@@ -702,13 +730,12 @@ describe('Flujo completo del embudo de reclutamiento', () => {
     const otro = await request(app)
       .post('/api/candidatos')
       .set(auth('reclutador'))
-      .send({
+      .send(datosCandidatoBase({
         nombreCompleto: 'Otro Para Citar',
-        tipoDocumento: 'CC',
         celular: '3009990002',
         cliente: 'Obamacare',
         cargo: 'Agente',
-      });
+      }));
     candidatosCreados.push(otro.body.datos.id);
 
     const res = await request(app)
@@ -719,6 +746,23 @@ describe('Flujo completo del embudo de reclutamiento', () => {
     expect(res.status).toBe(403);
   });
 
+  it('8d. registra el seguimiento (llamada/WhatsApp) mientras la citación sigue pendiente', async () => {
+    const guardar = await request(app)
+      .post(`/api/seleccion/candidatos/${candidatoId}/seguimiento`)
+      .set(auth('reclutador'))
+      .send({ llamada: true });
+
+    expect(guardar.status).toBe(200);
+    expect(guardar.body.datos.llamada).toBe(true);
+    expect(guardar.body.datos.whatsapp).toBe(null);
+
+    const consulta = await request(app)
+      .get(`/api/seleccion/candidatos/${candidatoId}/seguimiento`)
+      .set(auth('reclutador'));
+    expect(consulta.status).toBe(200);
+    expect(consulta.body.datos).toMatchObject({ llamada: true, whatsapp: null });
+  });
+
   it('9. reclutamiento marca la asistencia', async () => {
     const res = await request(app)
       .post(`/api/seleccion/candidatos/${candidatoId}/asistencia`)
@@ -727,6 +771,27 @@ describe('Flujo completo del embudo de reclutamiento', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.datos.estado).toBe('entrevistado');
+  });
+
+  it('9c. el seguimiento sigue editable después de marcar la asistencia (decisión de negocio, 2026-09-15)', async () => {
+    // Antes de este cambio, tanto el POST como el GET dependían de la
+    // citación seguir "pendiente" — apenas se marcaba la asistencia, el GET
+    // devolvía null (el botón "Seguimiento" desaparecía del listado) y el
+    // POST fallaba con CITACION_RESUELTA.
+    const actualizar = await request(app)
+      .post(`/api/seleccion/candidatos/${candidatoId}/seguimiento`)
+      .set(auth('reclutador'))
+      .send({ whatsapp: true });
+
+    expect(actualizar.status).toBe(200);
+    // `llamada` no se tocó en esta llamada: sigue en lo que ya tenía (COALESCE).
+    expect(actualizar.body.datos).toMatchObject({ llamada: true, whatsapp: true });
+
+    const consulta = await request(app)
+      .get(`/api/seleccion/candidatos/${candidatoId}/seguimiento`)
+      .set(auth('reclutador'));
+    expect(consulta.status).toBe(200);
+    expect(consulta.body.datos).toMatchObject({ llamada: true, whatsapp: true });
   });
 
   it('9b. no asistir sin motivo es rechazado por el esquema', async () => {
@@ -937,13 +1002,12 @@ describe('Visibilidad entre reclutadores (ver_candidatos_todos) y permisos de se
     const res = await request(app)
       .post('/api/candidatos')
       .set({ Authorization: `Bearer ${sesiones.otroReclutador.token}` })
-      .send({
+      .send(datosCandidatoBase({
         nombreCompleto: 'Pedro Ajeno Pérez',
-        tipoDocumento: 'CC',
         celular: '3005550000',
         cliente: 'Hogar',
         cargo: 'Agente',
-      });
+      }));
     candidatoAjenoId = res.body.datos.id;
     candidatosCreados.push(candidatoAjenoId);
   });
@@ -1009,14 +1073,14 @@ describe('Evaluación solo aplica a cargo Agente', () => {
     const res = await request(app)
       .post('/api/candidatos')
       .set(auth('reclutador'))
-      .send({
+      .send(datosCandidatoBase({
         nombreCompleto: 'Coordinador Sin Evaluacion',
-        tipoDocumento: 'CC',
         celular: '3005551111',
         cliente: 'Staff Operacional',
         cargo: 'Coordinador',
         citado: true,
-      });
+        estadoGestion: undefined,
+      }));
     candidatoId = res.body.datos.id;
     candidatosCreados.push(candidatoId);
 
@@ -1166,14 +1230,14 @@ describe('Evaluación solo aplica a cargo Agente', () => {
     const res = await request(app)
       .post('/api/candidatos')
       .set(auth('reclutador'))
-      .send({
+      .send(datosCandidatoBase({
         nombreCompleto: 'Agente Sin Evaluar',
-        tipoDocumento: 'CC',
         celular: '3005552222',
         cliente: 'Obamacare',
         cargo: 'Agente',
         citado: true,
-      });
+        estadoGestion: undefined,
+      }));
     const id = res.body.datos.id;
     candidatosCreados.push(id);
 
@@ -1209,14 +1273,14 @@ describe('Degradación de integraciones externas', () => {
     const res = await request(app)
       .post('/api/candidatos')
       .set(auth('reclutador'))
-      .send({
+      .send(datosCandidatoBase({
         nombreCompleto: 'Falla Correo Test',
         tipoDocumento: 'PPT',
         celular: '3007778888',
         email: correo('falla-correo'),
         cliente: 'Pymes',
         cargo: 'Agente',
-      });
+      }));
     candidatoId = res.body.datos.id;
     candidatosCreados.push(candidatoId);
   });
@@ -1248,29 +1312,10 @@ describe('Degradación de integraciones externas', () => {
     expect(filas[0].error).toMatch(/SMTP/);
   });
 
-  it('un candidato sin correo no puede recibir el formulario', async () => {
-    const sinCorreo = await request(app)
-      .post('/api/candidatos')
-      .set(auth('reclutador'))
-      .send({
-        nombreCompleto: 'Sin Correo',
-        tipoDocumento: 'CC',
-        celular: '3009990000',
-        cliente: 'ACA',
-        cargo: 'Agente',
-      });
-    candidatosCreados.push(sinCorreo.body.datos.id);
-
-    await request(app)
-      .post(`/api/candidatos/${sinCorreo.body.datos.id}/estado`)
-      .set(auth('reclutador'))
-      .send({ estado: 'contacto_exitoso' });
-
-    const res = await request(app)
-      .post(`/api/candidatos/${sinCorreo.body.datos.id}/enviar-formulario`)
-      .set(auth('reclutador'));
-
-    expect(res.status).toBe(400);
-    expect(res.body.error.codigo).toBe('SIN_EMAIL');
-  });
+  // La prueba "un candidato sin correo no puede recibir el formulario" se
+  // retiró: el correo pasó a ser obligatorio en el registro (decisión de
+  // negocio, 2026-09-15), así que ya no hay forma de crear ESE escenario
+  // desde la API. El guard `SIN_EMAIL` de `formulario.service.js` se deja
+  // igual, como defensa para candidatos históricos sin correo (creados antes
+  // de este cambio).
 });

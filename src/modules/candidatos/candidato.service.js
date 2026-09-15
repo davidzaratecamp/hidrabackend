@@ -347,11 +347,11 @@ function crearCandidatoServicio({ candidatoRepo, catalogoRepo, estadoServicio, u
       for (const t of await catalogoRepo.listarSimple('tipos_documento')) linea(t.codigo, t.nombre);
       fila += 1;
 
-      seccion('FUENTE DE RECLUTAMIENTO (opcional)');
+      seccion('FUENTE DE RECLUTAMIENTO');
       for (const f of await catalogoRepo.listarSimple('fuentes_reclutamiento')) linea(f.codigo, f.nombre);
       fila += 1;
 
-      seccion('ESTADO GESTIÓN RECLUTAMIENTO (opcional, aplica cuando CITADO = No)');
+      seccion('ESTADO GESTIÓN RECLUTAMIENTO (obligatorio solo cuando CITADO = No)');
       for (const e of await catalogoRepo.listarEstadosGestion()) linea(e.codigo, e.nombre);
       fila += 1;
 

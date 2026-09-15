@@ -33,6 +33,7 @@ const GRUPOS = [
   { label: 'DOCUMENTO' },
   { label: 'EDAD' },
   { label: 'CORREO' },
+  { label: 'TELÉFONO' },
   { label: 'CONTACTO', sub: ['LLAMADA', 'WHATSAPP'] },
   { label: 'PERFIL' },
   { label: 'CITADO' },
@@ -91,7 +92,7 @@ function filaBase(c, fechaValor) {
   const llamada = siNo(c.contacto_llamada);
   const whatsapp = siNo(c.contacto_whatsapp);
 
-  return [
+  const valores = [
     fechaCorta(fechaValor),
     c.reclutador || '',
     c.cliente || '',
@@ -101,6 +102,7 @@ function filaBase(c, fechaValor) {
     c.numero_documento || '',
     c.edad ?? '',
     c.email || '',
+    c.celular || '',
     llamada,
     whatsapp,
     // PERFIL y CITADO se capturan desde 2026-08-30 en el registro (migración 007).
@@ -111,10 +113,14 @@ function filaBase(c, fechaValor) {
     // candidatos que citó Selección después del registro.
     c.citado === null || c.citado === undefined ? (c.fecha_citado ? 'Sí' : 'No') : siNo(c.citado),
     c.estado_gestion || textoEstadoGestion(c),
-    // SEGUIMIENTO ASISTENCIA reutiliza el contacto inicial: es el único dato de
-    // seguimiento que el sistema captura hoy.
-    llamada,
-    whatsapp,
+    // SEGUIMIENTO ASISTENCIA: resultado real del contacto previo a la
+    // entrevista (llamada y/o WhatsApp/Global de confirmación), de la ÚLTIMA
+    // citación del candidato — sigue editable después de marcar la
+    // asistencia (decisión de negocio, 2026-09-15), así que si se actualiza
+    // después de la entrevista, el Excel sale con ese valor más reciente, no
+    // con el que había antes.
+    siNo(c.seguimiento_llamada),
+    siNo(c.seguimiento_whatsapp),
     textoAsistencia(c.asistio),
     c.motivo_inasistencia || '',
     textoAntecedente(c.antecedente_adres),
@@ -124,6 +130,10 @@ function filaBase(c, fechaValor) {
     siNo(c.aprobacion_final),
     c.aprobacion_final_razon || '',
   ];
+
+  // El documento es oficial y se comparte fuera del sistema: todo el texto en
+  // mayúsculas, a pedido del usuario. No afecta EDAD (número).
+  return valores.map((valor) => (typeof valor === 'string' ? valor.toUpperCase() : valor));
 }
 
 /** FECHA = fecha en que se citó. Usada por los reportes "citados"/"aprobados". */

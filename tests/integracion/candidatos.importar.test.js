@@ -25,6 +25,26 @@ const sufijo = Date.now();
 const correo = (n) => `${n}.${sufijo}@prueba.local`;
 const documento = (n) => `${sufijo}${n}`.slice(-15);
 
+/**
+ * Fila completa y válida para el Excel de importación, con `overrides` por
+ * encima. Todos los campos del formulario "Nuevo Candidato" son obligatorios
+ * (decisión de negocio, 2026-09-15) — este helper evita repetir los que no
+ * son el foco de cada prueba puntual.
+ */
+function filaCandidatoBase(overrides = {}) {
+  return {
+    edad: '25',
+    email: correo(`import-${Math.random().toString(36).slice(2, 8)}`),
+    contactoLlamada: 'Sí',
+    contactoWhatsapp: 'Sí',
+    perfil: 'Perfil de prueba',
+    citado: 'No',
+    estadoGestion: '#Errado',
+    fuenteReclutamiento: 'Computrabajo',
+    ...overrides,
+  };
+}
+
 let app;
 const usuariosCreados = [];
 const documentosDeCandidatos = [];
@@ -127,7 +147,7 @@ describe('Carga masiva de candidatos por Excel', () => {
     documentosDeCandidatos.push(docSinCitar, docCitado);
 
     const buffer = await construirExcel([
-      {
+      filaCandidatoBase({
         cliente: 'Obamacare',
         cargo: 'Agente',
         nombreCompleto: 'Excel Sin Citar',
@@ -135,8 +155,8 @@ describe('Carga masiva de candidatos por Excel', () => {
         numeroDocumento: docSinCitar,
         celular: '3001110000',
         citado: 'No',
-      },
-      {
+      }),
+      filaCandidatoBase({
         cliente: 'obamacare', // minúsculas: el importador es flexible con catálogos
         cargo: ' Agente ', // espacios de más: también debe resolver
         nombreCompleto: 'Excel Citado',
@@ -144,7 +164,8 @@ describe('Carga masiva de candidatos por Excel', () => {
         numeroDocumento: docCitado,
         celular: '3002220000',
         citado: 'Sí',
-      },
+        estadoGestion: undefined,
+      }),
     ]);
 
     const res = await subir('reclutador', buffer);
@@ -183,14 +204,14 @@ describe('Carga masiva de candidatos por Excel', () => {
     hoja.addRow(COLUMNAS.map((c) => c.encabezado));
     const fila = hoja.addRow(
       COLUMNAS.map((c) => {
-        const valores = {
+        const valores = filaCandidatoBase({
           cliente: 'Obamacare',
           cargo: 'Agente',
           nombreCompleto: 'Excel Correo Hipervinculo',
           tipoDocumento: 'CC',
           numeroDocumento: doc,
           celular: '3006660000',
-        };
+        });
         return valores[c.campo] ?? '';
       })
     );
@@ -216,30 +237,30 @@ describe('Carga masiva de candidatos por Excel', () => {
     // pero ese es justo el comportamiento que el test verifica que NO pasa.
 
     const buffer = await construirExcel([
-      {
+      filaCandidatoBase({
         cliente: 'Obamacare',
         cargo: 'Agente',
         nombreCompleto: 'Bueno Uno',
         tipoDocumento: 'CC',
         numeroDocumento: docBueno1,
         celular: '3003330000',
-      },
-      {
+      }),
+      filaCandidatoBase({
         cliente: 'Obamacare',
         cargo: 'Cargo Que No Existe',
         nombreCompleto: 'Fila Mala',
         tipoDocumento: 'CC',
         numeroDocumento: documento('99'),
         celular: '3004440000',
-      },
-      {
+      }),
+      filaCandidatoBase({
         cliente: 'Obamacare',
         cargo: 'Agente',
         nombreCompleto: 'Bueno Dos',
         tipoDocumento: 'CC',
         numeroDocumento: docBueno2,
         celular: '3005550000',
-      },
+      }),
     ]);
 
     const res = await subir('reclutador', buffer);
@@ -260,7 +281,7 @@ describe('Carga masiva de candidatos por Excel', () => {
     const docCompartido = documento('31');
     documentosDeCandidatos.push(docCompartido);
 
-    const filaCon = (nombre) => ({
+    const filaCon = (nombre) => filaCandidatoBase({
       cliente: 'Obamacare',
       cargo: 'Agente',
       nombreCompleto: nombre,

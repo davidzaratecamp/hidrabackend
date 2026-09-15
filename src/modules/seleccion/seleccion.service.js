@@ -152,27 +152,29 @@ function crearSeleccionServicio({
     },
 
     /**
-     * Seguimiento antes de la entrevista: registra si el candidato respondió
-     * la llamada y/o el mensaje de WhatsApp/Global de confirmación. Ambos
-     * canales son independientes y opcionales — se puede guardar el resultado
-     * de uno sin conocer todavía el del otro.
+     * Seguimiento de contacto (llamada y/o WhatsApp/Global de confirmación)
+     * sobre la citación más reciente del candidato. Ambos canales son
+     * independientes y opcionales — se puede guardar el resultado de uno sin
+     * conocer todavía el del otro.
+     *
+     * Sigue editable después de registrar la asistencia (decisión de
+     * negocio, 2026-09-15): antes solo se podía tocar mientras la citación
+     * seguía pendiente, y el botón "Seguimiento" del listado desaparecía en
+     * cuanto se marcaba "Asistió"/"No asistió", sin poder corregirlo después.
      */
     async registrarSeguimiento(candidatoId, { llamada, whatsapp }, usuario) {
       await candidatoServicio.obtenerAccesible(candidatoId, usuario);
 
-      const citacion = await seleccionRepo.citacionPendiente(candidatoId);
+      const citacion = await seleccionRepo.citacionMasReciente(candidatoId);
       if (!citacion) {
-        throw HttpError.conflicto('El candidato no tiene una citación pendiente', {
-          codigo: 'SIN_CITACION_PENDIENTE',
+        throw HttpError.conflicto('El candidato no tiene ninguna citación registrada', {
+          codigo: 'SIN_CITACION',
         });
       }
 
-      const actualizada = await seleccionRepo.registrarSeguimiento(citacion.id, { llamada, whatsapp });
-      if (!actualizada) {
-        throw HttpError.conflicto('Esa citación ya fue resuelta', { codigo: 'CITACION_RESUELTA' });
-      }
+      await seleccionRepo.registrarSeguimiento(citacion.id, { llamada, whatsapp });
 
-      const fresca = await seleccionRepo.citacionPendiente(candidatoId);
+      const fresca = await seleccionRepo.citacionMasReciente(candidatoId);
       return {
         citacionId: fresca.id,
         llamada: fresca.seguimiento_llamada,
@@ -180,10 +182,10 @@ function crearSeleccionServicio({
       };
     },
 
-    /** Estado actual del seguimiento de la citación pendiente del candidato. */
+    /** Estado actual del seguimiento de la citación más reciente del candidato. */
     async seguimientoActual(candidatoId, usuario) {
       await candidatoServicio.obtenerAccesible(candidatoId, usuario);
-      const citacion = await seleccionRepo.citacionPendiente(candidatoId);
+      const citacion = await seleccionRepo.citacionMasReciente(candidatoId);
       if (!citacion) return null;
       return {
         citacionId: citacion.id,

@@ -46,9 +46,12 @@ const SELECT_BASE = `
          -- Contratación (solo Staff, aprobado en decisión final): contraparte
          -- de "citar a formación" para Agente, migración 016.
          ctr.contratado AS contratacion, ctr.razon AS contratacion_razon,
-         -- Seguimiento antes de la entrevista, de la citación pendiente (si
-         -- hay una): alimenta el color del botón "Seguimiento" del listado.
-         cita.seguimiento_llamada, cita.seguimiento_whatsapp
+         -- Seguimiento de contacto (llamada/WhatsApp de confirmación) de la
+         -- ÚLTIMA citación del candidato, esté o no resuelta: alimenta el
+         -- color y la visibilidad del botón "Seguimiento" del listado, que
+         -- sigue disponible después de marcar la asistencia (decisión de
+         -- negocio, 2026-09-15).
+         cita.id AS citacion_id, cita.seguimiento_llamada, cita.seguimiento_whatsapp
     FROM candidatos c
     JOIN tipos_documento td   ON td.id = c.tipo_documento_id
     JOIN clientes cl          ON cl.id = c.cliente_id
@@ -72,11 +75,12 @@ const SELECT_BASE = `
     LEFT JOIN candidato_aprobacion_jefe_inmediato aji ON aji.candidato_id = c.id
     LEFT JOIN candidato_aprobacion_prueba_tecnica apt ON apt.candidato_id = c.id
     LEFT JOIN candidato_contratacion ctr ON ctr.candidato_id = c.id
-    -- Citación pendiente del candidato, si tiene una: igual que "eva" arriba,
-    -- correlacionada porque la tabla es 1:N (se puede reagendar).
+    -- Última citación del candidato, si tiene una (esté o no resuelta): igual
+    -- que "eva" arriba, correlacionada porque la tabla es 1:N (se puede
+    -- reagendar).
     LEFT JOIN candidato_citaciones cita
            ON cita.id = (SELECT ci2.id FROM candidato_citaciones ci2
-                          WHERE ci2.candidato_id = c.id AND ci2.asistio = 'pendiente'
+                          WHERE ci2.candidato_id = c.id
                           ORDER BY ci2.created_at DESC, ci2.id DESC LIMIT 1)
 `;
 

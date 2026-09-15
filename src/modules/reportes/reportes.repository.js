@@ -27,6 +27,7 @@ function crearReportesRepositorio({ db }) {
            eg.nombre AS estado_gestion,
            u.nombre_completo AS reclutador,
            ult.created_at AS fecha_citado, ult.asistio, mi.nombre AS motivo_inasistencia,
+           ult.seguimiento_llamada, ult.seguimiento_whatsapp,
            df.aprobacion AS aprobacion_final, df.razon AS aprobacion_final_razon,
            ev.total AS evaluacion_total,
            ${TIPOS_ANTECEDENTE.map(antecedente).join(',\n           ')}

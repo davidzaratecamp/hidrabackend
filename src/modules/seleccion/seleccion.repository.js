@@ -47,6 +47,24 @@ function crearSeleccionRepositorio({ db }) {
     return filas[0] ?? null;
   }
 
+  /**
+   * Última citación del candidato, esté o no resuelta. A diferencia de
+   * `citacionPendiente`, no se detiene en 'asistio' — la usa el seguimiento
+   * (llamada/WhatsApp de confirmación), que sigue siendo editable después de
+   * marcar la asistencia (decisión de negocio, 2026-09-15): antes solo se
+   * podía tocar mientras la citación seguía pendiente, y el botón
+   * desaparecía del todo apenas se registraba la asistencia.
+   */
+  async function citacionMasReciente(candidatoId) {
+    const [filas] = await db.query(
+      `SELECT * FROM candidato_citaciones
+        WHERE candidato_id = ?
+        ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [candidatoId]
+    );
+    return filas[0] ?? null;
+  }
+
   async function citacionesDe(candidatoId) {
     const [filas] = await db.query(
       `SELECT c.id, c.created_at AS fecha_citado, c.asistio, c.fecha_asistencia, c.observaciones,
@@ -76,20 +94,22 @@ function crearSeleccionRepositorio({ db }) {
   }
 
   /**
-   * Seguimiento antes de la entrevista: si el candidato respondió la llamada
-   * y/o el mensaje de WhatsApp/Global de confirmación.
+   * Seguimiento de contacto (llamada y/o WhatsApp/Global de confirmación)
+   * sobre la citación más reciente del candidato.
    *
    * `llamada`/`whatsapp` son independientes entre sí y opcionales: se puede
    * registrar el resultado de un solo canal sin tocar el otro (COALESCE deja
-   * intacto el que no se manda). Solo aplica mientras la citación sigue
-   * pendiente, igual que `registrarAsistencia`.
+   * intacto el que no se manda). Editable en cualquier momento de la vida de
+   * la citación, no solo mientras sigue pendiente (decisión de negocio,
+   * 2026-09-15) — antes `WHERE ... AND asistio = 'pendiente'` bloqueaba el
+   * guardado apenas se registraba la asistencia.
    */
   async function registrarSeguimiento(citacionId, { llamada, whatsapp }) {
     const [res] = await db.query(
       `UPDATE candidato_citaciones
           SET seguimiento_llamada = COALESCE(?, seguimiento_llamada),
               seguimiento_whatsapp = COALESCE(?, seguimiento_whatsapp)
-        WHERE id = ? AND asistio = 'pendiente'`,
+        WHERE id = ?`,
       [llamada ?? null, whatsapp ?? null, citacionId]
     );
     return res.affectedRows > 0;
@@ -368,7 +388,8 @@ function crearSeleccionRepositorio({ db }) {
   }
 
   return {
-    crearCitacion, citacionPendiente, citacionesDe, registrarAsistencia, registrarSeguimiento, agenda,
+    crearCitacion, citacionPendiente, citacionMasReciente, citacionesDe, registrarAsistencia,
+    registrarSeguimiento, agenda,
     crearEvaluacion, guardarPuntajes, criteriosActivos, evaluacionConTotal,
     evaluacionesDe, puntajesDe,
     guardarDecisionFinal, decisionFinalDe,

@@ -58,12 +58,31 @@ async function iniciarSesion(correoUsuario) {
   return { token: res.body.datos.token, usuario: res.body.datos.usuario };
 }
 
+// Desde que todos los campos del formulario "Nuevo Candidato" pasaron a ser
+// obligatorios (decisión de negocio, 2026-09-15), el fixture de este archivo
+// necesita valores por defecto para los campos que antes se omitían.
+let contadorFixture = 0;
+function datosCandidatoPorDefecto() {
+  contadorFixture += 1;
+  return {
+    numeroDocumento: `8${String(sufijo).slice(-9)}${contadorFixture}`,
+    edad: 25,
+    email: correo(`filtro-${contadorFixture}`),
+    contactoLlamada: true,
+    contactoWhatsapp: true,
+    perfil: 'Perfil de prueba',
+    citado: false,
+    estadoGestion: '#Errado',
+    fuenteReclutamiento: 'Computrabajo',
+  };
+}
+
 /** Crea un candidato con el reclutador indicado como dueño, en 'nuevo'. */
 async function crearCandidato(rolCreador, datos) {
   const res = await request(app)
     .post('/api/candidatos')
     .set(auth(rolCreador))
-    .send(datos);
+    .send({ ...datosCandidatoPorDefecto(), ...datos });
   expect(res.status).toBe(201);
   candidatosCreados.push(res.body.datos.id);
   return res.body.datos.id;

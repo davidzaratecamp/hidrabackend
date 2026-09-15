@@ -40,6 +40,9 @@ async function crearUsuario({ email, roles }) {
   return login.body.datos.token;
 }
 
+// Desde que todos los campos del formulario "Nuevo Candidato" pasaron a ser
+// obligatorios (decisión de negocio, 2026-09-15), este fixture necesita
+// valores por defecto para los campos que antes se omitían.
 async function crearCandidato(datos) {
   const res = await request(app)
     .post('/api/candidatos')
@@ -48,6 +51,14 @@ async function crearCandidato(datos) {
       tipoDocumento: 'CC',
       celular: '3000000000',
       numeroDocumento: `9${String(Date.now()).slice(-9)}${candidatosCreados.length}`,
+      edad: 25,
+      email: correo(`c${candidatosCreados.length}`),
+      contactoLlamada: true,
+      contactoWhatsapp: true,
+      perfil: 'Perfil de prueba',
+      citado: false,
+      estadoGestion: '#Errado',
+      fuenteReclutamiento: 'Computrabajo',
       ...datos,
     });
   candidatosCreados.push(res.body.datos.id);

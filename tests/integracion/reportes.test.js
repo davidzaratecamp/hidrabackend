@@ -85,10 +85,23 @@ async function candidatoCompleto(nombre) {
       cliente: 'Hogar',
       cargo: 'Agente',
       perfil: 'Comercial con experiencia',
+      // Todos los campos del formulario "Nuevo Candidato" son obligatorios
+      // (decisión de negocio, 2026-09-15).
+      citado: false,
+      estadoGestion: '#Errado',
+      fuenteReclutamiento: 'Computrabajo',
     });
   expect(creado.status).toBe(201);
   const id = creado.body.datos.id;
   candidatosCreados.push(id);
+
+  // `citado` es obligatorio al registrar desde el 2026-09-15, así que ya no
+  // se puede crear un candidato con el campo sin diligenciar por la API — el
+  // fallback de la columna CITADO del Excel (cae a si tiene citación real,
+  // ver excel.js::filaBase) solo aplica a candidatos históricos con la
+  // columna en NULL. Se simula aquí directo en la base para seguir probando
+  // ese camino.
+  await pool.query('UPDATE candidatos SET citado = NULL WHERE id = ?', [id]);
 
   const avanzar = (estado, motivo) =>
     request(app)
@@ -107,10 +120,27 @@ async function candidatoCompleto(nombre) {
     .set(auth('reclutador'))
     .send({});
 
+  // Seguimiento ANTES de la entrevista: respondió la llamada, no el WhatsApp
+  // todavía. Verifica que el Excel refleje esto si se descargara en este
+  // punto (ver prueba dedicada más abajo) — y que siga editable después de
+  // marcar la asistencia (decisión de negocio, 2026-09-15).
+  await request(app)
+    .post(`/api/seleccion/candidatos/${id}/seguimiento`)
+    .set(auth('reclutador'))
+    .send({ llamada: true, whatsapp: false });
+
   await request(app)
     .post(`/api/seleccion/candidatos/${id}/asistencia`)
     .set(auth('reclutador'))
     .send({ asistio: 'asistio' });
+
+  // Seguimiento actualizado DESPUÉS de la entrevista: ahora sí respondió el
+  // WhatsApp. El Excel debe salir con este valor, el más reciente, no con el
+  // de antes de la entrevista.
+  await request(app)
+    .post(`/api/seleccion/candidatos/${id}/seguimiento`)
+    .set(auth('reclutador'))
+    .send({ whatsapp: true });
 
   await request(app)
     .post(`/api/seleccion/candidatos/${id}/evaluacion`)
@@ -192,19 +222,29 @@ describe('Exportación a Excel', () => {
     expect(hoja.getRow(1).getCell(1).value).toBe('FECHA');
     expect(hoja.getRow(1).getCell(2).value).toBe('ANALISTA');
     expect(hoja.getRow(1).getCell(3).value).toBe('CAMPAÑA');
+    // TELÉFONO va después de CORREO (columna 9).
+    expect(hoja.getRow(1).getCell(10).value).toBe('TELÉFONO');
     // Grupo CONTACTO se fusiona horizontalmente y reparte subtítulos.
-    expect(hoja.getRow(2).getCell(10).value).toBe('LLAMADA');
-    expect(hoja.getRow(2).getCell(11).value).toBe('WHATSAPP');
+    expect(hoja.getRow(2).getCell(11).value).toBe('LLAMADA');
+    expect(hoja.getRow(2).getCell(12).value).toBe('WHATSAPP');
 
-    // La fila de datos: el candidato del beforeAll.
+    // La fila de datos: el candidato del beforeAll. Documento oficial: todo el
+    // texto sale en mayúsculas.
     const fila = hoja.getRow(3);
-    expect(fila.getCell(5).value).toBe('Marcela Andrea Pineda Rojas');
-    expect(fila.getCell(3).value).toBe('Hogar');
+    expect(fila.getCell(5).value).toBe('MARCELA ANDREA PINEDA ROJAS');
+    expect(fila.getCell(3).value).toBe('HOGAR');
+    expect(fila.getCell(10).value).toBe('3005551234');
     // PERFIL ya no sale en blanco: se captura en el registro (migración 007).
-    expect(fila.getCell(12).value).toBe('Comercial con experiencia');
+    expect(fila.getCell(13).value).toBe('COMERCIAL CON EXPERIENCIA');
     // CITADO deja de ser 'Sí' fijo. Este candidato no lo diligenció, así que
     // cae a la citación real, que sí existe.
-    expect(fila.getCell(13).value).toBe('Sí');
+    expect(fila.getCell(14).value).toBe('SÍ');
+    // SEGUIMIENTO ASISTENCIA (columnas 16/17): el candidato del beforeAll
+    // respondió la llamada antes de la entrevista (SÍ) y el WhatsApp recién
+    // DESPUÉS de marcarse la asistencia — el Excel debe salir con el valor
+    // más reciente de cada canal, no con el que había antes de la entrevista.
+    expect(fila.getCell(16).value).toBe('SÍ');
+    expect(fila.getCell(17).value).toBe('SÍ');
     // La FECHA sale de candidato_citaciones, no de una columna sin escritor.
     expect(fila.getCell(1).value).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
   });
@@ -223,10 +263,11 @@ describe('Exportación a Excel', () => {
     expect(res.status).toBe(200);
     const hoja = await leerHoja(res);
     const fila = hoja.getRow(3);
-    expect(fila.getCell(5).value).toBe('Marcela Andrea Pineda Rojas');
-    // APROBADO (columna 23) y antecedente ADRES (columna 19).
-    expect(fila.getCell(23).value).toBe('Sí');
-    expect(fila.getCell(19).value).toBe('Aprobado');
+    expect(fila.getCell(5).value).toBe('MARCELA ANDREA PINEDA ROJAS');
+    // APROBADO (columna 24) y antecedente ADRES (columna 20), con TELÉFONO
+    // corriendo el resto de columnas una posición a la derecha.
+    expect(fila.getCell(24).value).toBe('SÍ');
+    expect(fila.getCell(20).value).toBe('APROBADO');
   });
 
   it('el rango filtra de verdad: un día sin citaciones sale sin filas', async () => {
