@@ -3,6 +3,7 @@
 const { Router } = require('express');
 const { validar } = require('../../shared/middleware/validar');
 const { requierePermiso } = require('../../shared/middleware/autorizar');
+const { archivoExcel } = require('../../shared/middleware/subirExcel');
 const esquema = require('./candidato.schema');
 
 function crearCandidatoRutas({ candidatoControlador, autenticar }) {
@@ -31,6 +32,19 @@ function crearCandidatoRutas({ candidatoControlador, autenticar }) {
     requierePermiso('reasignar_candidatos'),
     validar({ body: esquema.reasignarCartera }),
     candidatoControlador.reasignarCartera
+  );
+
+  router.get(
+    '/plantilla-importacion',
+    requierePermiso('crear_candidatos'),
+    candidatoControlador.plantillaImportacion
+  );
+
+  router.post(
+    '/importar-excel',
+    requierePermiso('crear_candidatos'),
+    archivoExcel,
+    candidatoControlador.importarExcel
   );
 
   router.get(

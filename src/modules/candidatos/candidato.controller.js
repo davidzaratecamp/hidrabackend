@@ -1,6 +1,8 @@
 'use strict';
 
 const { ok, creado, paginado } = require('../../shared/utils/respuesta');
+const { HttpError } = require('../../shared/errors/HttpError');
+const { enviarWorkbook } = require('../reportes/excel');
 
 function crearCandidatoControlador({ candidatoServicio, formularioServicio }) {
   return {
@@ -13,7 +15,7 @@ function crearCandidatoControlador({ candidatoServicio, formularioServicio }) {
     },
 
     async resumenEstados(req, res) {
-      return ok(res, await candidatoServicio.resumenEstados(req.usuario));
+      return ok(res, await candidatoServicio.resumenEstados(req.usuario, req.query));
     },
 
     async obtener(req, res) {
@@ -38,6 +40,22 @@ function crearCandidatoControlador({ candidatoServicio, formularioServicio }) {
 
     async reasignarCartera(req, res) {
       return ok(res, await candidatoServicio.reasignarCartera(req.body, req.usuario));
+    },
+
+    /** Plantilla .xlsx para la carga masiva: encabezados + hoja de referencia de catálogos. */
+    async plantillaImportacion(req, res) {
+      const workbook = await candidatoServicio.construirPlantillaImportacion();
+      return enviarWorkbook(res, workbook, 'plantilla-candidatos.xlsx');
+    },
+
+    /** Carga masiva de candidatos desde un .xlsx. Todo o nada, ver candidato.service.js. */
+    async importarExcel(req, res) {
+      if (!req.file) {
+        throw HttpError.peticionInvalida('Debes adjuntar un archivo .xlsx', {
+          codigo: 'ARCHIVO_REQUERIDO',
+        });
+      }
+      return ok(res, await candidatoServicio.importarExcel(req.file.buffer, req.usuario));
     },
 
     async reasignar(req, res) {

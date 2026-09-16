@@ -129,7 +129,18 @@ function crearCandidatoRepositorio({ db }) {
       condiciones.push(visibilidad.sql);
       params.push(...visibilidad.params);
     }
-    if (estado) {
+    if (estado === 'formularios_completados') {
+      // "Formularios Completados" es un logro (llenó los 6 pasos), no una
+      // etapa exclusiva del embudo: un candidato citado directo al
+      // registrarse (estado.service.js, transición nuevo->citado) puede
+      // llenar el formulario después y queda con estado='citado' para
+      // siempre, porque esa transición no existe en el grafo (solo existe
+      // formularios_enviados->formularios_completados). Por eso esta
+      // pestaña filtra por progreso real, no por el código de estado.
+      condiciones.push(
+        '(SELECT COUNT(*) FROM candidato_formulario_pasos p2 WHERE p2.candidato_id = c.id) = 6'
+      );
+    } else if (estado) {
       condiciones.push('ec.codigo = ?');
       params.push(estado);
     }
@@ -180,21 +191,63 @@ function crearCandidatoRepositorio({ db }) {
   }
 
   /** Conteo por estado, respetando la visibilidad. Alimenta las pestañas del frontend. */
-  async function resumenPorEstado({ visibilidad }) {
-    // El filtro por dueño va en el ON del LEFT JOIN, no en el WHERE: así los
-    // estados sin candidatos siguen apareciendo con total 0 y el frontend puede
-    // pintar todas las pestañas.
+  async function resumenPorEstado({ visibilidad, agentes, staff }) {
+    // Mismo filtro de cargo que listar() ("Candidatos Staff"/"Solo Agentes"):
+    // si no se replica acá, la pestaña muestra el conteo GLOBAL (todos los
+    // cargos) mientras la lista, al hacer clic, ya viene filtrada por cargo -
+    // un estado con candidatos solo del cargo excluido queda con número > 0
+    // pero cero resultados al entrar.
+    // Subconsulta en vez de un JOIN a `cargos`: el JOIN a candidatos de abajo
+    // ya usa esta condición en su propio ON, y un ON no puede referenciar el
+    // alias de un JOIN que todavía no se ha introducido en la sentencia.
+    const condicionCargo = agentes
+      ? 'EXISTS (SELECT 1 FROM cargos ca WHERE ca.id = c.cargo_id AND ca.codigo LIKE ?)'
+      : staff
+        ? 'EXISTS (SELECT 1 FROM cargos ca WHERE ca.id = c.cargo_id AND ca.codigo NOT LIKE ?)'
+        : null;
+    const paramCargo = agentes || staff ? ['%agente%'] : [];
+
+    // El filtro por dueño (y ahora por cargo) va en el ON del LEFT JOIN, no en
+    // el WHERE: así los estados sin candidatos siguen apareciendo con total 0
+    // y el frontend puede pintar todas las pestañas.
+    const condicionesJoin = [
+      ...(visibilidad.sql ? [visibilidad.sql] : []),
+      ...(condicionCargo ? [condicionCargo] : []),
+    ];
+    const paramsJoin = [...visibilidad.params, ...paramCargo];
+
     const [filas] = await db.query(
       `SELECT ec.codigo AS estado, ec.nombre, ec.etapa, COUNT(c.id) AS total
          FROM estados_candidato ec
          LEFT JOIN candidatos c
                 ON c.estado_id = ec.id
-               ${visibilidad.sql ? `AND ${visibilidad.sql}` : ''}
+               ${condicionesJoin.length ? `AND ${condicionesJoin.join(' AND ')}` : ''}
         WHERE ec.activo = TRUE
         GROUP BY ec.id, ec.codigo, ec.nombre, ec.etapa, ec.orden
         ORDER BY ec.orden`,
-      visibilidad.params
+      paramsJoin
     );
+
+    // El conteo de "Formularios Completados" tiene que coincidir con el
+    // criterio de progreso real que usa listar(), no con el código de
+    // estado exacto (ver comentario ahí) — si no, el número de la pestaña
+    // queda desalineado con lo que aparece al hacer clic en ella.
+    const filaFormularios = filas.find((f) => f.estado === 'formularios_completados');
+    if (filaFormularios) {
+      const condicionesWhere = [
+        '(SELECT COUNT(*) FROM candidato_formulario_pasos p WHERE p.candidato_id = c.id) = 6',
+        ...(visibilidad.sql ? [visibilidad.sql] : []),
+        ...(condicionCargo ? [condicionCargo] : []),
+      ];
+      const [[{ total }]] = await db.query(
+        `SELECT COUNT(*) AS total
+           FROM candidatos c
+          WHERE ${condicionesWhere.join(' AND ')}`,
+        paramsJoin
+      );
+      filaFormularios.total = total;
+    }
+
     return filas;
   }
 

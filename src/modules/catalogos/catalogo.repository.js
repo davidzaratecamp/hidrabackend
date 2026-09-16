@@ -83,6 +83,54 @@ function crearCatalogoRepositorio({ db }) {
     return filas[0]?.id ?? null;
   }
 
+  // --- Variantes "flexibles" (mayúsculas/espacios no importan) ----------
+  // Exclusivas del importador masivo de candidatos (ver
+  // candidato.service.js::importarExcel): un Excel llenado a mano es más
+  // propenso a variar en may/min o espacios que el formulario web, que manda
+  // el código exacto tal cual lo eligió el usuario en un <select>. Las
+  // funciones de arriba (match exacto) siguen intactas para ese camino.
+
+  async function idPorCodigoFlexible(catalogo, codigo) {
+    const tabla = TABLAS_SIMPLES[catalogo];
+    if (!tabla) throw new Error(`Catálogo desconocido: ${catalogo}`);
+    if (codigo === null || codigo === undefined) return null;
+
+    const [filas] = await db.query(
+      `SELECT id FROM ${tabla} WHERE LOWER(TRIM(codigo)) = LOWER(TRIM(?)) AND activo = TRUE LIMIT 1`,
+      [codigo]
+    );
+    return filas[0]?.id ?? null;
+  }
+
+  async function idClienteFlexible(codigo) {
+    const [filas] = await db.query(
+      'SELECT id FROM clientes WHERE LOWER(TRIM(codigo)) = LOWER(TRIM(?)) AND activo = TRUE LIMIT 1',
+      [codigo]
+    );
+    return filas[0]?.id ?? null;
+  }
+
+  async function idCargoParaClienteFlexible(clienteId, codigoCargo) {
+    const [filas] = await db.query(
+      `SELECT c.id
+         FROM cargos c
+         JOIN cliente_cargos cc ON cc.cargo_id = c.id
+        WHERE cc.cliente_id = ? AND LOWER(TRIM(c.codigo)) = LOWER(TRIM(?)) AND c.activo = TRUE
+        LIMIT 1`,
+      [clienteId, codigoCargo]
+    );
+    return filas[0]?.id ?? null;
+  }
+
+  async function idEstadoGestionFlexible(codigo) {
+    const [filas] = await db.query(
+      `SELECT id FROM estados_gestion_reclutamiento
+        WHERE LOWER(TRIM(codigo)) = LOWER(TRIM(?)) AND activo = TRUE LIMIT 1`,
+      [codigo]
+    );
+    return filas[0]?.id ?? null;
+  }
+
   async function listarClientes() {
     const [filas] = await db.query(
       'SELECT id, codigo, nombre FROM clientes WHERE activo = TRUE ORDER BY orden'
@@ -158,6 +206,10 @@ function crearCatalogoRepositorio({ db }) {
     listarEstadosGestion,
     listarEstadosCandidato,
     listarTodo,
+    idPorCodigoFlexible,
+    idClienteFlexible,
+    idCargoParaClienteFlexible,
+    idEstadoGestionFlexible,
   };
 }
 

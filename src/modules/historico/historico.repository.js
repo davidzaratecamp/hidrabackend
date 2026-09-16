@@ -371,7 +371,6 @@ function aDetalle(f, satelites) {
 
     datosBasicos: {
       genero: datosBasicos?.genero ?? f.genero,
-      fechaNacimiento: datosBasicos?.fecha_nacimiento ?? f.fecha_nacimiento,
       estadoCivil: datosBasicos?.estado_civil ?? f.estado_civil,
       grupoSanguineo: datosBasicos?.grupo_sanguineo ?? f.grupo_sanguineo,
       eps: datosBasicos?.eps ?? f.eps,

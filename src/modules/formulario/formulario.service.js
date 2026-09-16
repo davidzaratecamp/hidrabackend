@@ -400,7 +400,10 @@ function crearFormularioServicio({
       await candidatoServicio.obtenerAccesible(candidatoId, usuario);
       const datos = await formularioRepo.obtenerCompleto(candidatoId);
       if (!datos) throw HttpError.noEncontrado('Candidato no encontrado');
-      return datos;
+      // No se solicita en ningún formulario: no mostrarla en el perfil del
+      // reclutador, aunque siga en la consulta compartida con el PDF.
+      const { fecha_nacimiento, ...resto } = datos;
+      return resto;
     },
   };
 
