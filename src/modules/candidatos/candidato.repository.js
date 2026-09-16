@@ -84,6 +84,20 @@ const SELECT_BASE = `
                           ORDER BY ci2.created_at DESC, ci2.id DESC LIMIT 1)
 `;
 
+/**
+ * "Citado" mostrado al usuario (perfil y listado): `c.citado` solo refleja la
+ * marca puesta al registrar (checkbox del alta) y se queda desactualizada si
+ * el candidato termina citado después por Selección desde la Agenda — el
+ * mismo caso que ya resuelve el Excel (reportes.repository.js/excel.js, vía
+ * fecha_citado). Se corrige acá, en JS y no en el SQL de `SELECT_BASE`,
+ * porque el driver solo auto-convierte a booleano real las columnas
+ * `TINYINT(1)` crudas (ver `convertirTipos` en `config/db.js`), no una
+ * expresión calculada con OR.
+ */
+function resolverCitado(fila) {
+  return { ...fila, citado: fila.citado === true || fila.citacion_id != null };
+}
+
 function crearCandidatoRepositorio({ db }) {
   async function crear(datos) {
     const [res] = await db.query(
@@ -109,7 +123,7 @@ function crearCandidatoRepositorio({ db }) {
 
   async function buscarPorId(id) {
     const [filas] = await db.query(`${SELECT_BASE} WHERE c.id = ?`, [id]);
-    return filas[0] ?? null;
+    return filas[0] ? resolverCitado(filas[0]) : null;
   }
 
   async function existeDocumento(numeroDocumento, exceptoId = null) {
@@ -191,7 +205,7 @@ function crearCandidatoRepositorio({ db }) {
       [...params, porPagina, (pagina - 1) * porPagina]
     );
 
-    return { items, total };
+    return { items: items.map(resolverCitado), total };
   }
 
   /** Conteo por estado, respetando la visibilidad. Alimenta las pestañas del frontend. */
