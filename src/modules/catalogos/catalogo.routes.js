@@ -10,11 +10,9 @@
 
 const { Router } = require('express');
 const { ok } = require('../../shared/utils/respuesta');
-const { limitePublico } = require('../../shared/middleware/seguridad');
 
 function crearCatalogoRutas({ catalogoRepo }) {
   const router = Router();
-  router.use(limitePublico());
 
   router.get('/', async (_req, res) => ok(res, await catalogoRepo.listarTodo()));
 

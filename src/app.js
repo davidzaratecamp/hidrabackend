@@ -15,7 +15,6 @@ const pinoHttp = require('pino-http');
 const {
   cabecerasSeguras,
   corsConfigurado,
-  limiteGeneral,
   identificadorPeticion,
   rutaNoEncontrada,
 } = require('./shared/middleware/seguridad');
@@ -34,7 +33,6 @@ function construirApp(contenedor) {
   app.use(identificadorPeticion());
   app.use(cabecerasSeguras());
   app.use(corsConfigurado());
-  app.use(limiteGeneral());
 
   app.use(
     pinoHttp({

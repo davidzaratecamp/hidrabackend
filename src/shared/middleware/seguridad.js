@@ -50,19 +50,6 @@ const mensajeLimite = {
   },
 };
 
-/** Límite general de la API. */
-function limiteGeneral() {
-  return rateLimit({
-    windowMs: config.limites.ventanaMs,
-    max: config.limites.maxPeticiones,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: mensajeLimite,
-    // En pruebas estorbaría.
-    skip: () => config.esPrueba,
-  });
-}
-
 /**
  * Límite estricto para el login y otros endpoints sensibles a fuerza bruta.
  * `skipSuccessfulRequests` hace que solo cuenten los intentos fallidos, así que
@@ -92,21 +79,6 @@ function limiteAutenticacion() {
   });
 }
 
-/**
- * Límite para los endpoints públicos por token del formulario del candidato.
- * Son las únicas rutas sin autenticación que escriben en la base.
- */
-function limitePublico() {
-  return rateLimit({
-    windowMs: config.limites.ventanaMs,
-    max: 60,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: mensajeLimite,
-    skip: () => config.esPrueba,
-  });
-}
-
 /** Identificador de petición, para poder seguir una petición entre líneas de log. */
 function identificadorPeticion() {
   return function asignarId(req, res, next) {
@@ -130,9 +102,7 @@ function rutaNoEncontrada() {
 module.exports = {
   cabecerasSeguras,
   corsConfigurado,
-  limiteGeneral,
   limiteAutenticacion,
-  limitePublico,
   identificadorPeticion,
   rutaNoEncontrada,
 };

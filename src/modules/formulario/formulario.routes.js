@@ -3,8 +3,7 @@
 /**
  * Formulario público del candidato.
  *
- * Son las únicas rutas sin autenticación que escriben en la base, así que llevan
- * su propio límite de peticiones. El sistema viejo no tenía ninguno.
+ * Son las únicas rutas sin autenticación que escriben en la base.
  *
  * La autorización es el token: quien lo tiene puede editar ESE candidato y solo
  * ese. Por eso el `candidato_id` nunca viaja en la URL ni en el cuerpo, se
@@ -13,13 +12,11 @@
 
 const { Router } = require('express');
 const { validar } = require('../../shared/middleware/validar');
-const { limitePublico } = require('../../shared/middleware/seguridad');
 const { ok } = require('../../shared/utils/respuesta');
 const esquema = require('./formulario.schema');
 
 function crearFormularioRutas({ formularioServicio }) {
   const router = Router();
-  router.use(limitePublico());
 
   const conToken = (parteCuerpo, metodo) => [
     validar({ params: esquema.parametrosToken, body: parteCuerpo }),
