@@ -703,6 +703,23 @@ describe('Flujo completo del embudo de reclutamiento', () => {
     expect(descarga.status).toBe(200);
     expect(descarga.headers['content-type']).toMatch(/application\/pdf/);
     expect(descarga.body.subarray(0, 5).toString()).toBe('%PDF-');
+
+    // Hoja de vida + tratamiento de datos, unidos en un solo PDF con el nombre del candidato.
+    const { PDFDocument } = require('pdf-lib');
+    const paginas = async (tipo) => {
+      const res = await request(app)
+        .get(`/api/firma/${candidatoId}/documento/${tipo}`)
+        .set(auth('seleccion'));
+      return (await PDFDocument.load(res.body)).getPageCount();
+    };
+    const unificado = await request(app)
+      .get(`/api/firma/${candidatoId}/unificado`)
+      .set(auth('seleccion'));
+    expect(unificado.status).toBe(200);
+    expect(unificado.headers['content-disposition']).toMatch(/^attachment; filename=".+\.pdf"/);
+    expect((await PDFDocument.load(unificado.body)).getPageCount()).toBe(
+      (await paginas('cv')) + (await paginas('tratamiento'))
+    );
   });
 
   it('8. reclutamiento cita al candidato, sin fecha', async () => {
@@ -853,6 +870,25 @@ describe('Flujo completo del embudo de reclutamiento', () => {
       .get(`/api/antecedentes/candidatos/${candidatoId}/documento/${conDoc.documento_id}`)
       .set(auth('seleccion'));
     expect(descarga.status).toBe(200);
+
+    // Los cuatro soportes se descargan unidos en un solo PDF con el nombre del candidato.
+    const unificado = await request(app)
+      .get(`/api/antecedentes/candidatos/${candidatoId}/unificado`)
+      .set(auth('seleccion'))
+      .buffer(true)
+      .parse((res, cb) => {
+        const partes = [];
+        res.on('data', (c) => partes.push(c));
+        res.on('end', () => cb(null, Buffer.concat(partes)));
+      });
+    expect(unificado.status).toBe(200);
+    expect(unificado.headers['content-type']).toContain('application/pdf');
+    expect(unificado.headers['content-disposition']).toMatch(/^attachment; filename=".+\.pdf"/);
+
+    const { PDFDocument } = require('pdf-lib');
+    const paginasSoporte = (await PDFDocument.load(fs.readFileSync(soporte))).getPageCount();
+    const pdf = await PDFDocument.load(unificado.body);
+    expect(pdf.getPageCount()).toBe(4 * paginasSoporte);
   });
 
   it('11. la evaluación calcula el total en el SERVIDOR', async () => {

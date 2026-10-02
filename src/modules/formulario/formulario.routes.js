@@ -13,6 +13,7 @@
 const { Router } = require('express');
 const { validar } = require('../../shared/middleware/validar');
 const { ok } = require('../../shared/utils/respuesta');
+const { enviarPdfComoAdjunto } = require('../../shared/utils/descarga');
 const esquema = require('./formulario.schema');
 
 function crearFormularioRutas({ formularioServicio }) {
@@ -68,6 +69,14 @@ function crearFirmaRutas({ formularioServicio, autenticar }) {
       return res.send(contenido);
     }
   );
+
+  router.get('/:id/unificado', validar({ params }), async (req, res) => {
+    const { contenido, nombreCandidato } = await formularioServicio.unificarDocumentosFirmados(
+      req.params.id,
+      req.usuario
+    );
+    return enviarPdfComoAdjunto(res, contenido, nombreCandidato, `candidato-${req.params.id}`);
+  });
 
   router.post('/:id/reenviar', validar({ params }), async (req, res) =>
     ok(res, await formularioServicio.reenviarAFirmar(req.params.id, req.usuario))

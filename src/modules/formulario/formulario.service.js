@@ -14,6 +14,7 @@
  */
 
 const { randomUUID } = require('node:crypto');
+const { PDFDocument } = require('pdf-lib');
 const { HttpError } = require('../../shared/errors/HttpError');
 const { separarNombreCompleto, nombreCompleto } = require('../../shared/utils/nombreCompleto');
 const plantillas = require('../integraciones/email/plantillas');
@@ -360,6 +361,37 @@ function crearFormularioServicio({
         throw HttpError.noEncontrado('Este candidato no tiene documentos enviados a firma');
       }
       return firma.descargar(registro.referencia_externa, tipo);
+    },
+
+    /** Hoja de vida y tratamiento de datos firmados, unidos en un solo PDF (en ese orden). */
+    async unificarDocumentosFirmados(candidatoId, usuario) {
+      const candidato = await candidatoServicio.obtenerAccesible(candidatoId, usuario);
+      const registro = await formularioRepo.buscarFirma(candidatoId);
+      if (!registro) {
+        throw HttpError.noEncontrado('Este candidato no tiene documentos enviados a firma');
+      }
+
+      const documentos = await Promise.all(
+        ['cv', 'tratamiento'].map((tipo) => firma.descargar(registro.referencia_externa, tipo))
+      );
+
+      const unificado = await PDFDocument.create();
+      for (const { contenido } of documentos) {
+        let origen;
+        try {
+          origen = await PDFDocument.load(contenido, { ignoreEncryption: true });
+        } catch (error) {
+          logger.error({ err: error, candidatoId }, 'FirmaCloud devolvió un PDF ilegible');
+          throw HttpError.servicioExterno('FirmaCloud devolvió un documento que no es un PDF válido');
+        }
+        const paginas = await unificado.copyPages(origen, origen.getPageIndices());
+        paginas.forEach((p) => unificado.addPage(p));
+      }
+
+      return {
+        contenido: Buffer.from(await unificado.save()),
+        nombreCandidato: nombreCompleto(candidato),
+      };
     },
 
     /** Expuesto para pruebas y para reintentar un envío a firma que falló. */

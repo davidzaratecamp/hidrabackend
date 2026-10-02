@@ -12,10 +12,61 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { PDFDocument } = require('pdf-lib');
 const { HttpError } = require('../../shared/errors/HttpError');
 const { borrarArchivos } = require('../../shared/middleware/subirArchivo');
+const { nombreCompleto } = require('../../shared/utils/nombreCompleto');
+
+// Tamaño carta en puntos, con margen, para las páginas que alojan una imagen.
+const PAGINA = { ancho: 612, alto: 792, margen: 36 };
 
 function crearAntecedentesServicio({ antecedentesRepo, candidatoServicio, config, logger }) {
+  async function leerArchivo(documento) {
+    const rutaAbsoluta = path.resolve(config.archivos.directorio, documento.ruta_archivo);
+    // Defensa en profundidad: aunque la ruta sale de la base, se confirma que
+    // no escapa del directorio de subidas.
+    if (!rutaAbsoluta.startsWith(path.resolve(config.archivos.directorio))) {
+      throw HttpError.noEncontrado('Documento no encontrado');
+    }
+
+    try {
+      return await fs.promises.readFile(rutaAbsoluta);
+    } catch (error) {
+      logger.error(
+        { err: error, documentoId: documento.id ?? documento.documento_id },
+        'El archivo está en la base pero no en disco'
+      );
+      throw HttpError.noEncontrado('El archivo ya no está disponible');
+    }
+  }
+
+  /** Agrega al PDF unificado las páginas de un soporte (PDF) o una página con la imagen. */
+  async function anexar(unificado, documento, contenido) {
+    if (documento.mime_type === 'application/pdf') {
+      const origen = await PDFDocument.load(contenido, { ignoreEncryption: true });
+      const paginas = await unificado.copyPages(origen, origen.getPageIndices());
+      paginas.forEach((p) => unificado.addPage(p));
+      return;
+    }
+
+    const imagen =
+      documento.mime_type === 'image/png'
+        ? await unificado.embedPng(contenido)
+        : await unificado.embedJpg(contenido);
+    const escala = Math.min(
+      1,
+      (PAGINA.ancho - 2 * PAGINA.margen) / imagen.width,
+      (PAGINA.alto - 2 * PAGINA.margen) / imagen.height
+    );
+    const { width, height } = imagen.scale(escala);
+    unificado.addPage([PAGINA.ancho, PAGINA.alto]).drawImage(imagen, {
+      x: (PAGINA.ancho - width) / 2,
+      y: (PAGINA.alto - height) / 2,
+      width,
+      height,
+    });
+  }
+
   return {
     async listar(candidatoId, usuario) {
       await candidatoServicio.obtenerAccesible(candidatoId, usuario);
@@ -103,20 +154,40 @@ function crearAntecedentesServicio({ antecedentesRepo, candidatoServicio, config
         throw HttpError.noEncontrado('Documento no encontrado');
       }
 
-      const rutaAbsoluta = path.resolve(config.archivos.directorio, documento.ruta_archivo);
-      // Defensa en profundidad: aunque la ruta sale de la base, se confirma que
-      // no escapa del directorio de subidas.
-      if (!rutaAbsoluta.startsWith(path.resolve(config.archivos.directorio))) {
-        throw HttpError.noEncontrado('Documento no encontrado');
+      return { contenido: await leerArchivo(documento), mimeType: documento.mime_type, documentoId };
+    },
+
+    /**
+     * Une en un solo PDF todos los soportes cargados, en el orden del catálogo.
+     * Los PDF aportan sus páginas tal cual; cada imagen ocupa una página carta.
+     */
+    async unificar(candidatoId, usuario) {
+      const candidato = await candidatoServicio.obtenerAccesible(candidatoId, usuario);
+      const documentos = await antecedentesRepo.documentosDe(candidatoId);
+      if (documentos.length === 0) {
+        throw HttpError.noEncontrado('El candidato no tiene soportes de antecedentes cargados', {
+          codigo: 'SIN_SOPORTES',
+        });
       }
 
-      try {
-        const contenido = await fs.promises.readFile(rutaAbsoluta);
-        return { contenido, mimeType: documento.mime_type, documentoId };
-      } catch (error) {
-        logger.error({ err: error, documentoId }, 'El archivo está en la base pero no en disco');
-        throw HttpError.noEncontrado('El archivo ya no está disponible');
+      const unificado = await PDFDocument.create();
+      for (const documento of documentos) {
+        const contenido = await leerArchivo(documento);
+        try {
+          await anexar(unificado, documento, contenido);
+        } catch (error) {
+          logger.error({ err: error, documentoId: documento.documento_id }, 'Soporte ilegible');
+          throw HttpError.peticionInvalida(
+            `No se pudo leer el soporte de ${documento.nombre}. Vuelve a cargarlo e intenta de nuevo.`,
+            { codigo: 'SOPORTE_ILEGIBLE' }
+          );
+        }
       }
+
+      return {
+        contenido: Buffer.from(await unificado.save()),
+        nombreCandidato: nombreCompleto(candidato),
+      };
     },
   };
 }

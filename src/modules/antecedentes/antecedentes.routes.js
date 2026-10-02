@@ -6,6 +6,7 @@ const { validar } = require('../../shared/middleware/validar');
 const { requierePermiso } = require('../../shared/middleware/autorizar');
 const { crearSubidor } = require('../../shared/middleware/subirArchivo');
 const { ok } = require('../../shared/utils/respuesta');
+const { enviarPdfComoAdjunto } = require('../../shared/utils/descarga');
 
 const params = z.object({ id: z.coerce.number().int().positive() });
 
@@ -62,6 +63,19 @@ function crearAntecedentesRutas({ antecedentesServicio, autenticar }) {
       // usuario es entrada no confiable y acaba en una cabecera HTTP.
       res.set('Content-Disposition', `inline; filename="antecedente-${documentoId}"`);
       return res.send(contenido);
+    }
+  );
+
+  router.get(
+    '/candidatos/:id/unificado',
+    requierePermiso('ver_candidatos'),
+    validar({ params }),
+    async (req, res) => {
+      const { contenido, nombreCandidato } = await antecedentesServicio.unificar(
+        req.params.id,
+        req.usuario
+      );
+      return enviarPdfComoAdjunto(res, contenido, nombreCandidato, `candidato-${req.params.id}`);
     }
   );
 

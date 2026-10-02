@@ -78,9 +78,23 @@ function crearAntecedentesRepositorio({ db }) {
     return filas;
   }
 
+  /** Soportes vigentes del candidato, en el mismo orden en que se muestran. */
+  async function documentosDe(candidatoId) {
+    const [filas] = await db.query(
+      `SELECT t.nombre, d.id AS documento_id, d.ruta_archivo, d.mime_type
+         FROM candidato_antecedentes a
+         JOIN tipos_antecedente t ON t.id = a.tipo_antecedente_id
+         JOIN candidato_documentos d ON d.id = a.documento_id
+        WHERE a.candidato_id = ? AND t.activo = TRUE
+        ORDER BY t.orden`,
+      [candidatoId]
+    );
+    return filas;
+  }
+
   return {
     registrarDocumento, buscarDocumento, eliminarDocumento,
-    guardar, documentoAnterior, listarDe,
+    guardar, documentoAnterior, listarDe, documentosDe,
   };
 }
 
