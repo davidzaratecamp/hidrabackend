@@ -50,7 +50,17 @@ function construirApp(contenedor) {
   // --- Cuerpo ----------------------------------------------------------------
   // Límite explícito: sin él, Express acepta cuerpos grandes por defecto y se
   // convierte en un vector de agotamiento de memoria.
-  app.use(express.json({ limit: '1mb' }));
+  app.use(
+    express.json({
+      limit: '1mb',
+      // Las integraciones máquina a máquina (Gestor) firman el cuerpo con HMAC:
+      // la firma se verifica sobre los bytes exactos, no sobre el JSON
+      // re-serializado. Solo se guarda en esas rutas.
+      verify(req, _res, buffer) {
+        if (req.originalUrl.startsWith('/api/integraciones/')) req.rawBody = buffer;
+      },
+    })
+  );
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
   // --- Salud -----------------------------------------------------------------

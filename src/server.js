@@ -31,7 +31,10 @@ async function iniciar() {
     );
   });
 
-  configurarApagado(servidor);
+  // Outbox hacia el Gestor Técnico (contratación). Sin configuración no arranca.
+  const detenerDespachador = contenedor.servicios.contratacionServicio.iniciarDespachador();
+
+  configurarApagado(servidor, detenerDespachador);
   return servidor;
 }
 
@@ -40,13 +43,14 @@ async function iniciar() {
  * peticiones en curso y cierra el pool. Sin esto, un redespliegue corta
  * peticiones a mitad y puede dejar transacciones abiertas.
  */
-function configurarApagado(servidor) {
+function configurarApagado(servidor, detenerDespachador = () => {}) {
   let apagando = false;
 
   const apagar = async (senal) => {
     if (apagando) return;
     apagando = true;
     logger.info({ senal }, 'Apagando servidor');
+    detenerDespachador();
 
     const forzar = setTimeout(() => {
       logger.error('El apagado ordenado excedió 10s; se fuerza la salida');

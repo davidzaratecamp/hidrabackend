@@ -680,7 +680,7 @@ llevó a la decisión de reescribir.
 
 ---
 
-## 11. Estado actual y cambios posteriores a este documento (actualizado 2026-09-01)
+## 11. Estado actual y cambios posteriores a este documento (actualizado 2026-10-02)
 
 Este documento se escribió el 2026-08-27, como el contrato inicial de la reescritura. Desde
 entonces la reescritura se ejecutó casi por completo (§7) y, sobre la marcha, se tomaron decisiones
@@ -933,3 +933,322 @@ romperse. El mecanismo es idéntico al que ya funciona a diario para candidatos 
 - Aplicar `db/migrations/010_seguimiento_citacion.sql` en producción (`node db/migrate.js`) — hoy solo
   está en local.
 - Todo lo de §11.8 sigue sin commitear al cierre de esta sesión (ver también §11.6).
+
+### 11.9 Visibilidad de candidatos entre roles, bug de "carga por analista" y dashboard exclusivo de
+### Administrador (2026-09-02)
+
+**a) Un candidato registrado por un usuario no aparecía en el listado de otro.** Reportado por el
+usuario: creó un candidato logueado como Administrador, y con un usuario de Reclutamiento ese
+candidato no salía en "Candidatos". Causa: `visibilidad.js` filtra el listado por
+`c.reclutador_id = usuario.id` salvo que el usuario tenga `ver_perfiles_completos` — permiso que
+Reclutamiento no tiene (§4.1/§11.1), así que solo veía su propia cartera. Decisión de negocio: **todos
+los roles deben ver el listado completo**, sin importar quién registró a cada candidato.
+
+En vez de darle `ver_perfiles_completos` a Reclutamiento (que también destaparía valoración
+psicológica/evaluación en histórico y trazabilidad, algo que no se pidió), se separó el concepto:
+nuevo permiso `ver_candidatos_todos` (migración `012_permiso_ver_candidatos_todos.sql`), otorgado a
+los **tres** roles, ahora es lo que consulta `visibilidad.js` (`veTodos`/`filtroSql`/`puedeAcceder`)
+para decidir si un usuario ve candidatos ajenos. `ver_perfiles_completos` no se tocó y sigue aparte,
+gateando solo los datos sensibles de histórico/trazabilidad — mismo patrón de "un permiso, una
+responsabilidad" que ya se usó para separar Reclutamiento/Selección en §11.1.
+
+**b) Bug real en "Candidatos registrados por analista" (`trazabilidad.repository.js: equipo()`):
+cada analista de Reclutamiento mostraba "1" aunque no hubiera registrado nada.** `equipo()` hace
+`LEFT JOIN` de `usuarios` (con el rol `reclutamiento`) contra `candidato_estado_historial`, para que
+un reclutador sin ningún registro igual aparezca en la comparativa (con `creados = 0`). El conteo de
+cada periodo usa `PERIODOS[periodo]` (`dia`/`semana`/`mes`/`total`) — pero `PERIODOS.total` es el
+literal `'1 = 1'`, que a diferencia de los otros tres **no referencia `h.created_at`**. Con el
+`LEFT JOIN` eso significa que hasta la fila fantasma (sin match real, `h.*` en NULL) contaba como "1
+creado total" para cualquier reclutador, sin importar si de verdad registró algo — el caso reportado
+por el usuario (tres analistas mostrando "1" cada uno, con un solo candidato real en el sistema,
+registrado por un cuarto usuario) coincide exacto con este patrón. Fix: se agregó el guard
+`h.candidato_id IS NOT NULL` a las cuatro condiciones de período en `equipo()` — `resumen()` (mismo
+archivo) no tiene este bug porque ahí `PERIODOS.total` se usa sobre una consulta con `WHERE`, no un
+`LEFT JOIN`, así que no hay fila fantasma que contar.
+
+**c) Dashboard exclusivo de Administrador.** Pedido del usuario: Administrador aterrizaba en el
+"Dashboard de Selección" (lo hereda por compartir `evaluar_candidatos` con Selección, ver §11.2) sin
+que ese panel respondiera lo que Administrador necesita ver primero. Se le da uno propio y se le
+quita el de Selección:
+
+- **Nuevo `/dashboard` (`DashboardAdministrador.jsx`)**, primer ítem del menú "Mi gestión" y por lo
+  tanto destino de `RoleRedirect` tras iniciar sesión para quien lo tiene. Contenido, todo servido
+  por endpoints de `reportes`/`trazabilidad` que ya existían pero no tenían consumidor en el frontend:
+  totales globales (`GET /trazabilidad/global`), embudo de conversión **global** —de registrado a
+  contratado, todo el sistema— (`GET /reportes/estadisticas`), candidatos por cliente
+  (`GET /reportes/analytics/clientes`), progreso de formularios **acumulado** por paso, calculado en
+  el cliente a partir de los baldes exactos que devuelve `GET /reportes/analytics/progreso`, y carga
+  de trabajo por analista (`GET /trazabilidad/equipo`, reusando el componente `CandidatosPorAnalista`
+  que antes solo vivía en `DashboardSeleccion.jsx` — se movió a `ui/graficas.jsx` para no duplicarlo).
+  Gateado por `ver_usuarios` (ruta y menú): no hay permiso propio "ver dashboard administrador", se
+  reutiliza uno que hoy ya es exclusivo de Administrador — mismo criterio ya documentado en §11.1 para
+  "Agenda de entrevistas"/"Trazabilidad del equipo".
+- **`/seleccion/dashboard` pasa de `evaluar_candidatos` a un permiso nuevo, `ver_dashboard_seleccion`**
+  (migración `013_permiso_dashboard_seleccion.sql`), otorgado solo a Selección. Antes Administrador lo
+  heredaba por tener también `evaluar_candidatos`; con el permiso nuevo, exclusivo de Selección, deja
+  de aparecer en el menú/ruta de Administrador. El endpoint del backend
+  (`GET /reportes/panel-seleccion`) **no cambió** — sigue gateado por `evaluar_candidatos` a propósito:
+  la distinción nueva es de qué arma el frontend, no de quién puede pedir esos datos por API, mismo
+  criterio que el resto de §11.1.
+
+**Migraciones 011/012/013 pendientes de aplicar contra `ReclutamientoNuevo`.** Al intentar
+`node db/migrate.js` para aplicar 012 y 013, la 011 (`firmar_hoja_vida`, de una sesión anterior) falló
+con `Duplicate entry 'firmar_hoja_vida'` — sus datos (permiso + grants a administrador/selección) ya
+estaban aplicados en la base, pero sin el registro correspondiente en `migraciones_aplicadas`, así que
+el runner la reintenta y choca contra el `UNIQUE` en vez de saltarla. Eso bloquea que 012 y 013 se
+apliquen detrás. El intento de arreglarlo insertando la fila de control a mano vía script quedó
+bloqueado por el clasificador de permisos del modo automático; se le explicó la situación al usuario
+(con el `INSERT` exacto para `migraciones_aplicadas` y las dos formas de resolverlo) y quedó a su
+cargo. Hasta que eso se resuelva: `ver_candidatos_todos` y `ver_dashboard_seleccion` no existen todavía
+en la base, así que el fix de visibilidad (a) y el dashboard de administrador (c) no se pueden probar
+funcionalmente contra `ReclutamientoNuevo`.
+
+**Auto-commit, de nuevo (mismo fenómeno de `claude/lastcontext.md` §12).** Todo el trabajo de esta
+sesión apareció commiteado solo, sin que Claude ejecutara `git commit` en ningún momento:
+`hidrabackend` — `480e994 "ver todos los usuarios"`, `6cd0f6d "ajuste grafica admin"`,
+`ebe461f "dash admin"`; `hidrafrontend` — `b3beee4 "dash admin"`. Working tree limpio en ambos repos
+al cierre de la sesión. Avisado al usuario en el chat; causa sigue sin identificarse.
+
+**Pendiente real de esta sección:**
+- Resolver el desajuste de `migraciones_aplicadas` para la 011 y aplicar 011/012/013 (local y luego
+  producción) — sin esto, (a) y (c) de arriba quedan sin verificar contra datos reales.
+- §11.6 seguía señalando que Reclutamiento no tiene punto de entrada visible para citar un candidato
+  — no se tocó en esta sesión.
+
+### 11.10 Incidente de producción: el link del formulario fallaba desde datos móviles/otras redes
+### (2026-09-11) — enrutamiento asimétrico por doble tarjeta de red, no era el firewall
+
+Reportado por el usuario (dos capturas de WhatsApp de un candidato): al abrir desde datos móviles el
+link del correo (`http://200.91.204.54/candidato/formulario/<token>`), el celular daba
+`ERR_CONNECTION_ABORTED` — "No se puede acceder a este sitio". Desde la red de la oficina el mismo
+link sí abría, lo que apuntaba a un problema de alcance externo, no de la app.
+
+**Descartado primero (no era la causa esta vez):** el incidente de `ufw` ya documentado en
+`claude/context.md` (§ "Incidente de producción resuelto: sitio inaccesible por firewall") — se
+verificó `sudo ufw status verbose` y los puertos `22/80/3000/3306` seguían con `ALLOW IN Anywhere`
+(v4 y v6). Tampoco era nginx/node caídos: `ss -tlnp` confirmó nginx escuchando en `0.0.0.0:80` y
+`0.0.0.0:8080`, y node en `*:3000`. El log de nginx (`access.log`/`error.log`) no registraba nada al
+reproducir el fallo desde el celular — la petición nunca llegaba a la aplicación.
+
+**Causa real, encontrada con `tcpdump -i any -n port 80 or port 3000`:** el servidor
+(`hydraos-Standard-PC-i440FX-PIIX-1996`, una VM) tiene **dos tarjetas de red**:
+- `ens18`: red privada `10.255.255.0/24` (IP dinámica por DHCP, ruta por defecto vía `10.255.255.1`,
+  métrica **100**).
+- `ens19`: IP pública real `200.91.204.54/29` (IP estática, ruta por defecto vía `200.91.204.49`,
+  métrica **101**).
+
+Como la ruta por defecto de `ens18` tiene métrica más baja (preferida), el kernel usaba **esa** para
+responder a cualquier paquete sin importar por qué interfaz entró. El `tcpdump` mostró justo eso: SYN
+entrando por `ens19` (tráfico real de internet) y el SYN-ACK de respuesta saliendo por `ens18` hacia
+el gateway privado — que no puede devolverlo a un cliente real de internet. El cliente reintentaba el
+SYN varias veces y terminaba abortando la conexión (`ERR_CONNECTION_ABORTED`).
+
+Dato que confirmó el diagnóstico sin ambigüedad: la propia sesión SSH del usuario
+(`ssh hydraos@200.91.204.54`) también salía con origen `200.91.204.54` por el mismo camino roto —
+mostrado por `sudo ss -tnp | grep :22` (local `200.91.204.54:22`, remoto un IP público real) — pero
+esa sí funcionaba, porque la red del usuario tolera el enrutamiento asimétrico. Los operadores de
+datos móviles suelen aplicar *reverse path filtering* estricto (anti-spoofing) y sí lo rechazan — de
+ahí que el bug solo se viera "desde datos móviles u otra red" y nunca desde la oficina.
+
+**Fix aplicado en caliente (producción), vía SSH:**
+```bash
+sudo ip route add default via 200.91.204.49 dev ens19 table 200
+sudo ip rule add from 200.91.204.54 table 200 priority 100
+```
+Enrutamiento por políticas: fuerza que todo paquete con IP origen `200.91.204.54` salga siempre por
+`ens19`/`200.91.204.49`, sin importar la métrica de la tabla principal. Se aplicó con una red de
+seguridad (revertía solo a los 150s si algo salía mal) y se confirmó que resolvió el problema.
+
+⚠️ **Pendiente crítico, sin resolver al cierre de esta sesión — se pierde en cada reinicio:**
+- Lo de arriba **no es persistente**: es una tabla de rutas (`table 200`) agregada en caliente: un
+  reinicio del servidor la borra.
+- Peor aún, según reportó el usuario: **al reiniciar el servidor, la tarjeta pública (`ens19`) queda
+  apagada/despriorizada por NetworkManager en favor de la red interna (`ens18`), y hay que
+  habilitarla a mano** cada vez. Sin esto, ni siquiera hay IP pública activa, más allá del fix de
+  enrutamiento.
+- Falta implementar de forma persistente (vía `nmcli`, ya que `/etc/netplan/*.yaml` en este servidor
+  usa `renderer: NetworkManager`): que `ens19` arranque siempre sola (`autoconnect`/prioridad), y que
+  la regla `ip rule`/`table 200` de arriba se reaplique sola en cada boot (perfil de conexión de
+  `ens19` con `ipv4.routing-rules`, o un script de `NetworkManager dispatcher`). Se pidió
+  `nmcli connection show` / `nmcli device status` para diseñar el fix persistente pero la sesión
+  terminó antes de recibir esa salida.
+- **Mientras no se resuelva esto, cualquier reinicio del servidor de producción reintroduce el bug**
+  (candidatos con datos móviles no pueden abrir el link del formulario) hasta que alguien entre por
+  SSH, habilite `ens19` a mano y vuelva a correr los dos comandos de arriba.
+
+### 11.11 Dos bugs de filtros en "Candidatos" corregidos + carga masiva de candidatos por Excel
+### (2026-09-11/12)
+
+**a) Filtro "Formularios Completados" no mostraba candidatos con 6/6 pasos ya llenos.** Reportado por
+el usuario. Causa: ese filtro comparaba `estado = 'formularios_completados'` a secas, pero
+`estado_transiciones` (§ máquina de estados, `estado.service.js`) no tiene arista
+`citado → formularios_completados` — solo `formularios_enviados → formularios_completados`. Un
+candidato marcado "Citado: Sí" directo al registrarse (salta `nuevo → citado`, ver migración 009) que
+después llena el formulario por el link del correo se queda con `estado='citado'` para siempre; su
+avance a `formularios_completados` lo descarta en silencio `avanzarSiSePuede` (no hay excepción, solo
+no hace nada). **Fix**: ese filtro específico (`candidato.repository.js::listar`/`resumenPorEstado`)
+ya no compara por `estado`, compara por progreso real (`pasos_completados = 6`) — mismo patrón que ya
+usaba el sistema viejo para `citado`/`citado_gestion`. No se tocó la máquina de estados ni la pestaña
+"Citados".
+
+**b) "Candidatos Staff" mostraba un número en la pestaña pero cero resultados al hacer clic.**
+Reportado por el usuario en roles Selección y Administrador: "No Contesta" mostraba 1, "Rechazado" 3,
+"Rechazado Final" 6, pero la lista salía vacía en los tres. Causa: `resumenPorEstado` (alimenta el
+número de la pestaña) nunca filtraba por cargo, mientras que `listar` (la lista en sí) sí excluye
+cargo Agente cuando `segmento="staff"` — si los candidatos de un estado eran todos de cargo Agente, la
+pestaña los contaba (global) y la lista filtrada los escondía. Mismo bug aplica al toggle "Solo
+Agentes" del lado de Reclutamiento. **Fix**: `resumenPorEstado` ahora recibe `agentes`/`staff` y aplica
+el mismo filtro de cargo que `listar` (vía `EXISTS` sobre `cargos`, no un `JOIN` — un `JOIN` directo
+rompía el orden de las cláusulas `ON`, ver commit). Frontend: `ListaCandidatos.jsx` ahora manda
+`filtroCargo` también al pedir `resumen-estados` y lo recalcula al cambiar `segmento`/`soloAgentes`
+(antes solo dependía de `busqueda`).
+
+Verificado con `node --check`, la suite completa (122-128/123-129 según el punto de la sesión, el
+único fallo es preexistente y sin relación — `reportes.test.js::promedia la evaluación por criterio`,
+confirmado con `git stash` que ya fallaba antes de esta sesión) y prueba real en navegador (login
+Selección/Administrador, pestañas de "Candidatos Staff" y "Candidatos" con "Solo Agentes").
+
+**c) Carga masiva de candidatos por Excel (feature nueva).** Pedido del usuario: que reclutadores y
+administradores puedan subir un Excel y registrar varios candidatos de una, con los mismos campos del
+formulario "Nuevo Candidato" (incluido Citado Sí/No), quedando atribuidos a quien sube el archivo.
+Decisión de negocio: **todo o nada** — si una sola fila falla, no se registra ningún candidato del
+archivo, con un mensaje señalando la fila y el motivo exacto.
+
+- `POST /candidatos/importar-excel` y `GET /candidatos/plantilla-importacion`, gateados por
+  `crear_candidatos` (ya lo tienen reclutamiento y administrador; selección no, coincide con lo
+  pedido). Multipart en memoria (`src/shared/middleware/subirExcel.js`, no disco — el archivo es
+  transitorio), límite 100 MB (subido desde 5 MB a pedido del usuario).
+- **Garantía central**: cada fila válida termina en la base exactamente igual que si se hubiera
+  tecleado en "Nuevo Candidato" — se extrajo el cuerpo de la transacción de `crear()` a
+  `altaCandidatoEnTransaccion()` (candidato + historial + asignación inicial + citación si
+  `Citado=Sí`), reusada tanto por el alta manual como por el importador, dentro de una sola
+  transacción para TODO el archivo (todo o nada real, no solo a nivel de validación).
+- Validación reusa `candidato.schema.js::crear` (zod) fila por fila, sin duplicar reglas. Catálogos
+  (Campaña/Cargo/Tipo de Documento/Fuente/Estado Gestión) se resuelven con variantes "flexibles"
+  nuevas en `catalogo.repository.js` (`idPorCodigoFlexible`, etc. — `LOWER(TRIM(...))`, no tocan las
+  funciones exactas que usa el formulario manual), a pedido del usuario: el Excel puede traer
+  mayúsculas/espacios de más y aun así resolver.
+- Nuevo módulo `candidato.importarExcel.js`: lee el `.xlsx` con `exceljs` (no existía lector, solo
+  generador — el de exportar Excel en `reportes/excel.js`), mapea por texto de encabezado (no por
+  posición), y valida "Sí"/"No" de las 3 columnas booleanas antes de tocar el esquema.
+- Frontend: botón "Cargar Excel" junto a "Nuevo candidato" en `ListaCandidatos.jsx`, modal nuevo
+  `ImportarExcelModal.jsx` (plantilla descargable + subida + lista de errores por fila, sin cerrar el
+  modal si falla, para corregir sin perder contexto).
+
+**Dos bugs reales encontrados en uso real, ya corregidos:**
+- **Correo convertido en hipervínculo por Excel** (`candidato.importarExcel.js`): al escribir un
+  correo y dar Enter, Excel lo autoconvierte a `{ text, hyperlink }` — `String(valor)` de eso da
+  literalmente `"[object Object]"`, y el correo (perfectamente válido) se rechazaba como
+  "Invalid email address". Fix: `textoPlano()` extrae `.text` de hipervínculos, concatena
+  `richText`, y sigue `.result` de fórmulas, antes de cualquier validación.
+- **Carrera entre dos cargas simultáneas con el mismo documento**: la restricción `UNIQUE` de
+  `candidatos.numero_documento` (`uq_candidatos_documento`) protege la integridad —nunca quedan dos
+  candidatos con el mismo documento—, pero como la validación (`existeDocumento`) corre ANTES de
+  abrir la transacción, dos cargas al mismo segundo pueden pasarla ambas y solo una gana al insertar.
+  La que pierde veía un 409 genérico ("Ya existe un registro con esos datos") sin decir cuál fila.
+  Fix: se captura `ER_DUP_ENTRY` de esa restricción específica dentro del loop de inserción y se
+  traduce al mismo formato `Fila N: ...` que cualquier otro error de validación — el lote sigue
+  revirtiéndose completo (todo o nada intacto), pero ahora sí dice cuál fila fue.
+
+Verificado con `node --check`, suite completa (128/129, mismo fallo preexistente de siempre) y
+prueba end-to-end real en navegador (login Administrador, descarga de plantilla, archivo con fila
+mala rechazado con el error exacto, archivo corregido con 2 filas creadas — una con `Citado=Sí` quedó
+realmente citada, la otra en "Nuevo", ambas con el reclutador/admin correcto en la columna
+"Reclutador"). Tests de integración nuevos en `tests/integracion/candidatos.importar.test.js` (7
+casos: permisos, plantilla, alta exitosa con atribución/citación, todo-o-nada, correo hipervínculo,
+carrera de documento duplicado — este último corrido 5 veces seguidas sin fallar).
+
+**Pendiente de esta sección:** commitear y desplegar a producción (backend y frontend) — todo lo de
+arriba sigue solo en local al cierre de esta sesión.
+
+### 11.12 "Citado" del perfil mostraba "No" para candidatos ya citados por Selección (2026-09-16)
+
+Reportado por el usuario en producción: el candidato David Alejandro Devia Gómez (CC 1073514836),
+en estado `aprobado_final` (ya pasó por todo el embudo, incluida la citación), mostraba "Citado: No"
+en su perfil (`Ficha.jsx`).
+
+**Causa**: `hyd_candidatos.citado` solo se fija una vez, al registrar el candidato (checkbox "Citado"
+del formulario "Nuevo Candidato", ver §11.11-b y `candidato.service.js::crear`) — nunca se actualiza
+después si el candidato termina citado por el camino normal de Selección (Agenda →
+`seleccion.service.js`/`citar.js`, que solo tocan `estado` y `candidato_citaciones`, no la columna
+`citado`). Este candidato se registró con `Citado: No` y fue citado más tarde por Selección: el dato
+crudo quedó desactualizado aunque el proceso real siguió su curso. El Excel (`reportes/excel.js:114`)
+ya tenía este mismo parche (cae a `fecha_citado` cuando `citado` es `null`/`undefined`); el perfil y
+el listado nunca lo recibieron.
+
+**Fix** en `candidato.repository.js`: nueva función `resolverCitado(fila)`, aplicada a los resultados
+de `buscarPorId` (perfil) y `listar` (listado de candidatos) — `citado` pasa a ser `true` si la
+columna cruda ya lo era **o** si el candidato tiene alguna citación real (`citacion_id`, ya
+seleccionada en `SELECT_BASE` para el botón "Seguimiento"). Se resuelve en JS después de la consulta,
+no con una expresión SQL calculada en el `SELECT`: el driver (`config/db.js::convertirTipos`) solo
+auto-convierte a booleano real las columnas `TINYINT(1)` crudas, no el resultado de un `OR`/comparación
+— hacerlo en SQL habría devuelto `0`/`1` en vez de `true`/`false`, y `Ficha.jsx::siNo()` (que compara
+con `=== true`/`=== false`) lo habría mostrado en blanco en vez de "Sí"/"No".
+
+No cambia nada más: el campo sigue siendo de solo lectura en `EditarCandidato.jsx`/`CandidatoCampos.jsx`
+(no hay forma de marcar "Citado: Sí" a mano desde ahí, por diseño), y el botón "Citar" de
+`ListaCandidatos.jsx` sigue dependiendo únicamente de `estado` (`nuevo`/`formularios_completados`), no
+de este campo — para este candidato, ya en `aprobado_final`, sigue sin mostrarse, correctamente.
+
+Verificado con `node --check` y la suite completa (128/130, las 2 fallas de `reportes.test.js` son
+preexistentes — confirmado con `git stash` que fallan igual sin este cambio).
+
+**Pendiente:** commitear y desplegar a producción.
+
+### 11.13 Descarga unificada de antecedentes y de documentos firmados (2026-10-02)
+
+Pedido del usuario: desde el perfil del candidato, descargar en **un solo PDF** con el **nombre del
+candidato** como nombre de archivo (`José Peña.pdf`):
+
+- **Pestaña Antecedentes → "Descargar todos en un PDF"**
+  (`GET /api/antecedentes/candidatos/:id/unificado`, `antecedentesServicio.unificar()`): une los
+  soportes cargados en el orden del catálogo (`tipos_antecedente.orden`: ADRES, Policía, Comparendos,
+  Procuraduría), saltando los que no tienen archivo. Los PDF aportan sus páginas tal cual (`pdf-lib`,
+  `ignoreEncryption`); cada JPG/PNG va en una página carta, centrada y reducida para caber. Sin
+  soportes → 404 `SIN_SOPORTES`; un soporte ilegible → 400 `SOPORTE_ILEGIBLE` nombrando cuál, para
+  volver a cargarlo. El botón solo aparece si hay al menos un soporte. La lectura segura del archivo
+  (que la ruta no escape de `uploads/`) se extrajo a `leerArchivo()`, compartida con la descarga
+  individual.
+- **Pestaña Selección → panel "Firma electrónica" → "Descargar ambos en un PDF"**
+  (`GET /api/firma/:id/unificado`, `formularioServicio.unificarDocumentosFirmados()`): pide a
+  FirmaCloud la hoja de vida y el tratamiento de datos firmados (en paralelo) y los une en ese orden.
+  Si FirmaCloud devuelve algo que no es PDF → error de servicio externo, no un archivo roto.
+
+Ambas rutas usan `ver_candidatos` + `obtenerAccesible` (misma regla que las descargas individuales).
+El nombre de archivo lo arma `src/shared/utils/descarga.js::enviarPdfComoAdjunto()` (quita
+caracteres inválidos en nombres de archivo; `filename*` UTF-8 con respaldo ASCII). El frontend no
+puede leer esa cabecera (`api.get` solo devuelve el Blob), así que `PerfilCandidato.jsx` le pasa
+`nombreDe(candidato)` a `Antecedentes.jsx`/`ExpedienteSeleccion.jsx` y estos llaman a
+`descargarBlob()`. Ojo: las dos descargas producen el mismo nombre de archivo; si se bajan ambas, el
+navegador agrega "(1)" a la segunda — se ofreció distinguirlas con sufijo y quedó sin decidir.
+
+Verificado con la prueba de extremo a extremo (`flujo-completo.test.js`, pasos 7c y 10: número de
+páginas del unificado = suma de las partes) y en navegador contra la base local (antecedentes: 3 + 7
+= 10 páginas; firma del candidato 1073: 2 + 5 = 7 páginas).
+
+**Commits** (sin push al cierre de la sesión): `hidrabackend` `main` `f4aeb28`, `hidrafrontend`
+`sebas-branch` `931c85d`. Solo esos archivos; lo de la integración con Gestor (ver
+`claude/integracion-gestor.md`) sigue sin commitear a propósito. No requiere migraciones. Para
+desplegar: push → `git pull` + `pm2 restart hidra-backend` en el backend, merge a `main` +
+`git pull` + `npm run build` en el frontend. **No reiniciar el servidor** para esto: ver §11.10, el
+arreglo de red sigue sin ser persistente (el servidor pedía reinicio el 2026-10-02).
+
+Nota de lint: `formulario.service.js:437` (`fecha_nacimiento` sin usar) ya fallaba antes de este
+cambio; no se tocó.
+
+### 11.14 "Pendientes de decisión" y "Rechazados en evaluación" vacías en Clínica Agentes — no es bug
+### (2026-10-02)
+
+Reportado por el usuario en producción (perfil Administrador). Esas dos pestañas de
+`Decisiones.jsx` listan por **estado actual** (`/candidatos?estado=aprobado|rechazado`): son colas de
+trabajo — un Agente entra al evaluarse (`seleccion.service.js::evaluar`) y sale al darle "Decidir"
+(`aprobado_final`/`rechazado_final`). Consultado en producción: 0 candidatos en `aprobado` y 0 en
+`rechazado`; las 189 evaluaciones existentes ya tienen decisión final (135 aprobó→aprobado final,
+14 aprobó→rechazado final, 30 no aprobó→rechazado final, 10 no aprobó→aprobado final — la decisión
+final es independiente del puntaje por diseño). Los 33 en `entrevistado` esperan evaluación, que se
+hace desde "Candidatos" (botón "Evaluar"), no desde Clínica Agentes. "Aprobados"/"Rechazados" de esa
+pantalla no filtran por cargo, así que también incluyen Staff.
+
+Se le ofrecieron dos cambios, **sin decidir todavía**: (1) pestaña "Por evaluar" en Clínica Agentes
+con los Agentes en `entrevistado`; (2) que "Rechazados en evaluación" sea histórico (toda evaluación
+no aprobada, aunque ya tenga decisión final).

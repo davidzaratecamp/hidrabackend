@@ -111,6 +111,9 @@ Verificado con `curl` externo → ambos responden `200 OK` después del cambio.
 
 ⚠️ **Pendiente de seguridad, no resuelto:** el puerto `3306` (MySQL) está abierto a `Anywhere` en `ufw` — la base de datos de producción es alcanzable desde cualquier IP de internet, no solo localmente. Recomendado: `sudo ufw delete allow 3306/tcp` y, si se necesita acceso remoto real, restringirlo a IPs específicas (`sudo ufw allow from <IP> to any port 3306`).
 
+### 🔥 Incidente de producción distinto, mismo síntoma: link del formulario inaccesible desde datos móviles/otras redes (2026-09-11)
+No era `ufw` esta vez (se reverificó: `22/80/3000/3306` seguían `ALLOW IN Anywhere`). Causa real: el servidor tiene dos tarjetas de red (`ens18` privada `10.255.255.0/24` métrica 100, `ens19` pública `200.91.204.54/29` métrica 101) y, al tener `ens18` la ruta por defecto con métrica más baja, el kernel respondía TODO tráfico —incluidas las respuestas a conexiones que entraban por `ens19`, la tarjeta pública real— por el gateway privado, que no puede devolverlas a internet (enrutamiento asimétrico, confirmado con `tcpdump`). Redes que toleran asimetría (la oficina, la propia sesión SSH del usuario) no mostraban el bug; operadores móviles con *reverse path filtering* estricto sí lo rechazaban → `ERR_CONNECTION_ABORTED`. Fix aplicado en caliente: enrutamiento por políticas (`ip rule add from 200.91.204.54 table 200` + `ip route add default via 200.91.204.49 dev ens19 table 200`), forzando que las respuestas con IP origen pública siempre salgan por `ens19`. Detalle completo, incluido el pendiente crítico de persistencia (la tarjeta pública `ens19` se apaga/despriorizada al reiniciar y hay que habilitarla a mano, y la regla de enrutamiento tampoco sobrevive un reinicio), en `restructuracion.md` §11.10.
+
 ## Frontend — estructura
 
 ```
@@ -149,8 +152,20 @@ Otros archivos notables: `NuevoCandidato_clean.jsx` en `components/reclutador/` 
 | `candidato.routes.js` | `/api/candidato` | catálogos y validación de token públicos; CRUD candidato y analytics protegidos por permiso; formularios públicos por token (hoja de vida, datos básicos, estudios, experiencia, personal, consentimiento) |
 | `seleccion.routes.js` | `/api/seleccion` | candidatos citados/aprobados/rechazados, oleadas, estadísticas, asistencia, evaluación, decisión final |
 | `desprendibles.routes.js` | `/api/desprendibles` | meses disponibles y descarga de PDF de desprendible de nómina (vía API externa IntraCar) |
+| `modules/contratacion/contratacion.routes.js` | `/api/contratacion` | elegibles, lotes enviados a Gestor, reenviar/cancelar candidato, reintentar envío (permiso `enviar_contratacion`) |
+| `modules/contratacion/contratacion.routes.js` | `/api/integraciones/gestor/v1` | avisos de Gestor (`/contrataciones`, `/descartes`), máquina a máquina con firma HMAC, sin JWT |
+| `modules/antecedentes/antecedentes.routes.js` | `/api/antecedentes/candidatos/:id/unificado` | todos los soportes de antecedentes en un solo PDF con el nombre del candidato (2026-10-02, `restructuracion.md` §11.13) |
+| `modules/formulario/formulario.routes.js` | `/api/firma/:id/unificado` | hoja de vida + tratamiento de datos firmados (FirmaCloud) en un solo PDF con el nombre del candidato (2026-10-02, §11.13) |
 
 ## Notas operativas
 - El backend expone `GET /api/health` para chequeo rápido.
 - CORS habilitado solo para `http://localhost:5173/5174/5175` y `http://200.91.204.54` (IP de producción).
 - Los formularios de candidato (`/candidato/*` en frontend) son rutas públicas basadas en token, no requieren login.
+- **Integración con el Gestor Técnico (2026-10-01):** los aprobados se envían a RRHH de Gestor desde
+  Selección → "Contratación" (`src/components/contratacion/` en el frontend); el candidato pasa a
+  `contratado` solo con el aviso de Gestor. Mapa del lado de Hydra en
+  [`integracion-gestor.md`](integracion-gestor.md). El plan completo y la guía de despliegue están
+  en `conexionhydra.md`, en el repo de Gestor. Migración `018`, aplicada solo en local.
+- **Clínica Agentes (2026-10-02):** "Pendientes de decisión" y "Rechazados en evaluación" vacías en
+  producción **no es bug** — son colas por estado actual (`aprobado`/`rechazado`) y todos los
+  evaluados ya tenían decisión final. Diagnóstico y cambios ofrecidos en `restructuracion.md` §11.14.

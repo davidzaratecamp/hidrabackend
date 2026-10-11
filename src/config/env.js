@@ -95,6 +95,19 @@ const esquema = z.object({
 
   NOMINA_BASE_URL: z.string().url().optional(),
   API_KEY_NOMINA: z.string().optional(),
+
+  // Gestor Técnico (RRHH). Dos canales con credenciales DISTINTAS:
+  //   salida  (Hydra → Gestor): GESTOR_API_URL, GESTOR_API_KEY, GESTOR_HMAC_SECRET
+  //           = HYDRA_API_KEY / HYDRA_HMAC_SECRET en el .env de Gestor
+  //   entrada (Gestor → Hydra): GESTOR_CALLBACK_API_KEY, GESTOR_CALLBACK_HMAC_SECRET
+  //           = HYDRA_CALLBACK_API_KEY / HYDRA_CALLBACK_HMAC_SECRET en el .env de Gestor
+  GESTOR_API_URL: z.string().url().optional(),
+  GESTOR_API_KEY: z.string().optional(),
+  GESTOR_HMAC_SECRET: z.string().min(16, 'GESTOR_HMAC_SECRET debe tener al menos 16 caracteres').optional(),
+  GESTOR_CALLBACK_API_KEY: z.string().optional(),
+  GESTOR_CALLBACK_HMAC_SECRET: z.string().min(16, 'GESTOR_CALLBACK_HMAC_SECRET debe tener al menos 16 caracteres').optional(),
+  // Cada cuánto el despachador revisa el outbox hacia Gestor. 0 lo apaga.
+  GESTOR_DESPACHO_INTERVALO_MS: z.coerce.number().int().min(0).default(30_000),
 });
 
 const resultado = esquema.safeParse(process.env);
@@ -185,6 +198,29 @@ const config = Object.freeze({
     configurado: Boolean(env.NOMINA_BASE_URL && env.API_KEY_NOMINA),
     url: env.NOMINA_BASE_URL,
     apiKey: env.API_KEY_NOMINA,
+  }),
+
+  gestor: Object.freeze({
+    salida: Object.freeze({
+      configurado: Boolean(env.GESTOR_API_URL && env.GESTOR_API_KEY && env.GESTOR_HMAC_SECRET),
+      url: env.GESTOR_API_URL?.replace(/\/+$/, ''),
+      apiKey: env.GESTOR_API_KEY,
+      secreto: env.GESTOR_HMAC_SECRET,
+    }),
+    entrada: Object.freeze({
+      configurado: Boolean(env.GESTOR_CALLBACK_API_KEY && env.GESTOR_CALLBACK_HMAC_SECRET),
+      apiKey: env.GESTOR_CALLBACK_API_KEY,
+      secreto: env.GESTOR_CALLBACK_HMAC_SECRET,
+    }),
+    despacho: Object.freeze({
+      intervaloMs: env.GESTOR_DESPACHO_INTERVALO_MS,
+      enviosPorCorrida: 20,
+      timeoutMs: 10_000,
+      maxIntentos: 10,
+      backoffMaximoMinutos: 60,
+    }),
+    // Ventana anti-replay de las firmas, igual que en Gestor.
+    toleranciaTimestampSegundos: 300,
   }),
 });
 

@@ -37,6 +37,8 @@ const { crearAntecedentesRepositorio } = require('./modules/antecedentes/anteced
 const { crearTrazabilidadRepositorio } = require('./modules/trazabilidad/trazabilidad.repository');
 const { crearReportesRepositorio } = require('./modules/reportes/reportes.repository');
 const { crearHistoricoRepositorio } = require('./modules/historico/historico.repository');
+const { crearContratacionRepositorio } = require('./modules/contratacion/contratacion.repository');
+const { crearFormacionRepositorio } = require('./modules/formacion/formacion.repository');
 
 // Servicios
 const { crearUsuarioServicio } = require('./modules/usuarios/usuario.service');
@@ -47,6 +49,8 @@ const { crearDocumentosServicio } = require('./modules/documentos/documentos.ser
 const { crearFormularioServicio } = require('./modules/formulario/formulario.service');
 const { crearSeleccionServicio } = require('./modules/seleccion/seleccion.service');
 const { crearAntecedentesServicio } = require('./modules/antecedentes/antecedentes.service');
+const { crearContratacionServicio } = require('./modules/contratacion/contratacion.service');
+const { crearFormacionServicio } = require('./modules/formacion/formacion.service');
 
 // Integraciones
 const { crearEmailNodemailer, crearEmailMemoria } = require('./modules/integraciones/email');
@@ -55,6 +59,8 @@ const {
   crearFirmaCloudMemoria,
 } = require('./modules/integraciones/firmacloud');
 const { crearNominaHttp, crearNominaMemoria } = require('./modules/integraciones/nomina');
+const { crearGestorHttp } = require('./modules/integraciones/gestor');
+const { crearAutenticarGestor } = require('./modules/integraciones/gestor/autenticarGestor');
 
 // Controladores y rutas
 const { crearUsuarioControlador } = require('./modules/usuarios/usuario.controller');
@@ -74,6 +80,11 @@ const { crearTrazabilidadRutas } = require('./modules/trazabilidad/trazabilidad.
 const { crearReportesRutas } = require('./modules/reportes/reportes.routes');
 const { crearHistoricoRutas } = require('./modules/historico/historico.routes');
 const { crearDesprendiblesRutas } = require('./modules/desprendibles/desprendibles.routes');
+const {
+  crearContratacionRutas,
+  crearIntegracionGestorRutas,
+} = require('./modules/contratacion/contratacion.routes');
+const { crearFormacionRutas } = require('./modules/formacion/formacion.routes');
 
 /**
  * Elige el adaptador de correo.
@@ -113,6 +124,20 @@ function elegirNomina(sobrescrituras) {
   return crearNominaMemoria();
 }
 
+/**
+ * Gestor Técnico (contratación en RRHH). A diferencia de correo y FirmaCloud,
+ * sin configuración NO hay adaptador en memoria: un envío "exitoso" en memoria
+ * marcaría como entregado algo que nunca llegó. Sin Gestor, los envíos quedan
+ * pendientes en el outbox y salen cuando se configure. El adaptador en memoria
+ * (`crearGestorMemoria`) se inyecta solo en pruebas.
+ */
+function elegirGestor(sobrescrituras) {
+  if (sobrescrituras.gestor !== undefined) return sobrescrituras.gestor;
+  if (config.gestor.salida.configurado) return crearGestorHttp({ config: config.gestor.salida });
+  logger.warn('Gestor sin configurar: los envíos a contratación quedarán pendientes');
+  return null;
+}
+
 function construirContenedor(sobrescrituras = {}) {
   const db = sobrescrituras.db ?? pool;
   const transaccion = sobrescrituras.conTransaccion ?? conTransaccion;
@@ -127,9 +152,12 @@ function construirContenedor(sobrescrituras = {}) {
   const email = elegirEmail(sobrescrituras);
   const firma = elegirFirma(sobrescrituras);
   const nomina = elegirNomina(sobrescrituras);
+  const gestor = elegirGestor(sobrescrituras);
 
   // Fábricas disponibles dentro de una transacción.
   const fabricas = {
+    contratacionRepo: crearContratacionRepositorio,
+    formacionRepo: crearFormacionRepositorio,
     usuarioRepo: crearUsuarioRepositorio,
     rolRepo: crearRolRepositorio,
     catalogoRepo: crearCatalogoRepositorio,
@@ -152,6 +180,8 @@ function construirContenedor(sobrescrituras = {}) {
   const antecedentesRepo = crearAntecedentesRepositorio({ db });
   const trazabilidadRepo = crearTrazabilidadRepositorio({ db });
   const reportesRepo = crearReportesRepositorio({ db });
+  const contratacionRepo = crearContratacionRepositorio({ db });
+  const formacionRepo = crearFormacionRepositorio({ db });
 
   // Archivo histórico: otra base, otro pool, y `null` si no está configurada.
   // No entra en la unidad de trabajo porque nunca participa de una transacción:
@@ -182,6 +212,13 @@ function construirContenedor(sobrescrituras = {}) {
   const antecedentesServicio = crearAntecedentesServicio({
     antecedentesRepo, candidatoServicio, config, logger,
   });
+  const contratacionServicio = crearContratacionServicio({
+    contratacionRepo, estadoServicio, gestor, uow, config, logger,
+    // En pruebas el despacho se dispara a mano, para no competir con las aserciones.
+    despachoInmediato: sobrescrituras.despachoInmediato ?? !config.esPrueba,
+  });
+  const formacionServicio = crearFormacionServicio({ formacionRepo, uow });
+  const autenticarGestor = crearAutenticarGestor({ config: config.gestor, logger });
 
   // --- Controladores ---------------------------------------------------------
   const usuarioControlador = crearUsuarioControlador({ usuarioServicio });
@@ -205,6 +242,10 @@ function construirContenedor(sobrescrituras = {}) {
     '/api/reportes': crearReportesRutas({ reportesRepo, autenticar }),
     '/api/historico': crearHistoricoRutas({ historicoRepo, firma, autenticar }),
     '/api/desprendibles': crearDesprendiblesRutas({ nomina, autenticar }),
+    '/api/formacion': crearFormacionRutas({ formacionServicio, autenticar }),
+    '/api/contratacion': crearContratacionRutas({ contratacionServicio, autenticar }),
+    // Máquina a máquina: Gestor avisa contratados/descartados. Firma HMAC, sin JWT.
+    '/api/integraciones/gestor/v1': crearIntegracionGestorRutas({ contratacionServicio, autenticarGestor }),
   };
 
   return {
@@ -213,15 +254,16 @@ function construirContenedor(sobrescrituras = {}) {
     db,
     routers,
     middlewares: { autenticar, autenticarOpcional },
-    integraciones: { email, firma, nomina },
+    integraciones: { email, firma, nomina, gestor },
     servicios: {
       usuarioServicio, authServicio, candidatoServicio, estadoServicio,
       formularioServicio, seleccionServicio, antecedentesServicio, documentosServicio,
+      contratacionServicio, formacionServicio,
     },
     repositorios: {
       usuarioRepo, rolRepo, catalogoRepo, candidatoRepo,
       formularioRepo, seleccionRepo, antecedentesRepo, trazabilidadRepo, reportesRepo,
-      historicoRepo,
+      historicoRepo, contratacionRepo, formacionRepo,
     },
   };
 }
