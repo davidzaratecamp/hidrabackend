@@ -112,7 +112,11 @@ function filaBase(c, fechaValor) {
     // 009 —marcar Citado = Sí crea la citación—, pero el respaldo cubre a los
     // candidatos que citó Selección después del registro.
     c.citado === null || c.citado === undefined ? (c.fecha_citado ? 'Sí' : 'No') : siNo(c.citado),
-    c.estado_gestion || textoEstadoGestion(c),
+    // "Estado gestión" (catálogo de la reclutadora) solo describe a quien NO
+    // se ha citado. En cuanto existe una citación —al registrar o después, por
+    // Selección— manda el estado real del proceso; si no, un "No contesta" o
+    // "No interesado" viejo se quedaba pegado aunque el candidato avanzara.
+    c.fecha_citado ? textoEstadoGestion(c) : c.estado_gestion || textoEstadoGestion(c),
     // SEGUIMIENTO ASISTENCIA: resultado real del contacto previo a la
     // entrevista (llamada y/o WhatsApp/Global de confirmación), de la ÚLTIMA
     // citación del candidato — sigue editable después de marcar la

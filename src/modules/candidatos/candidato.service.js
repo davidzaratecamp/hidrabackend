@@ -129,7 +129,12 @@ function crearCandidatoServicio({ candidatoRepo, catalogoRepo, estadoServicio, u
       ciudadId: ref.ciudadId ?? null,
       fuenteReclutamientoId: ref.fuenteReclutamientoId ?? null,
       tipificacionLlamadaId: ref.tipificacionLlamadaId ?? null,
-      estadoGestionId: ref.estadoGestionId ?? null,
+      // "Estado gestión" es el motivo por el que NO se citó: con Citado = Sí no
+      // aplica y se descarta. El formulario ya lo vacía, pero la importación por
+      // Excel lo dejaba pasar si la fila traía las dos columnas llenas, y luego
+      // el export lo mostraba encima del estado real (bug 2026-10-16: candidata
+      // "aprobado_final" que salía como "No interesado / Ventas").
+      estadoGestionId: datos.citado === true ? null : ref.estadoGestionId ?? null,
     });
 
     // El registro de creación queda en el historial con estado anterior NULL.
