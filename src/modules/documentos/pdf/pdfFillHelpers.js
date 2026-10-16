@@ -9,6 +9,29 @@ function widthOf(font, text, size) {
   return font.widthOfTextAtSize(text, size);
 }
 
+// Caracteres de cp1252 (0x80-0x9F) que sí existen en WinAnsi aunque estén fuera de Latin-1.
+const WINANSI_EXTRA_CHARS = new Set([
+  '€', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', 'Ž', '‘',
+  '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', 'ž', 'Ÿ',
+]);
+
+// Las fuentes estándar de pdf-lib (Times) solo codifican WinAnsi: un salto de línea, un tab o
+// un emoji en cualquier valor hace tronar widthOfTextAtSize/drawText con "WinAnsi cannot
+// encode ...", y eso tumbaba la generación COMPLETA de la hoja de vida — el envío a FirmaCloud
+// nunca ocurría (bug real 2026-10-16: "Funciones" escrito en varios renglones en el textarea).
+// Todo texto que llega a los helpers de dibujo pasa por aquí: caracteres no codificables se
+// vuelven espacio y cualquier secuencia de espacios/saltos colapsa a un solo espacio.
+function sanitizeForPdf(value) {
+  if (value === null || value === undefined) return '';
+  let out = '';
+  for (const ch of String(value)) {
+    const code = ch.codePointAt(0);
+    const ok = (code >= 0x20 && code <= 0x7E) || (code >= 0xA0 && code <= 0xFF) || WINANSI_EXTRA_CHARS.has(ch);
+    out += ok ? ch : ' ';
+  }
+  return out.replace(/\s+/g, ' ').trim();
+}
+
 // Reduce el tamaño de fuente hasta que el texto quepa en maxWidth en una sola línea.
 // Si ni al tamaño mínimo cabe, trunca con "…".
 function fitSingleLine(font, text, maxWidth, { startSize = 9, minSize = 6 } = {}) {
@@ -64,6 +87,7 @@ function wrapLines(font, text, maxWidth, size, firstLineWidth = maxWidth) {
 // resto del texto, si no cabe en esa línea, sigue envolviendo debajo a partir de x, con el
 // ancho completo maxWidth (ya sin la nota de por medio).
 function drawTextBox(page, font, text, { x, y, maxWidth, maxHeight, startSize = 9, minSize = 6.5, lineGap = 1.15, color = rgb(0.15, 0.15, 0.15), firstLineX, firstLineWidth }) {
+  text = sanitizeForPdf(text);
   if (!text) return;
   let size = startSize;
   let lines;
@@ -89,8 +113,9 @@ function drawTextBox(page, font, text, { x, y, maxWidth, maxHeight, startSize = 
 }
 
 function drawFit(page, font, text, { x, y, maxWidth, startSize = 9, minSize = 6, color = rgb(0.15, 0.15, 0.15) }) {
-  if (text === null || text === undefined || text === '') return;
-  const { text: fitted, size } = fitSingleLine(font, String(text), maxWidth, { startSize, minSize });
+  const clean = sanitizeForPdf(text);
+  if (!clean) return;
+  const { text: fitted, size } = fitSingleLine(font, clean, maxWidth, { startSize, minSize });
   page.drawText(fitted, { x, y, size, font, color });
 }
 
@@ -162,6 +187,6 @@ function getRowColumnBorders(vertLines, rowY, minX = 0) {
 }
 
 module.exports = {
-  fitSingleLine, wrapLines, drawTextBox, drawFit, marcarSiNo, fmtFecha, nombreCompleto,
+  fitSingleLine, wrapLines, drawTextBox, drawFit, marcarSiNo, fmtFecha, nombreCompleto, sanitizeForPdf,
   getTableBorders, getRowColumnBorders
 };
