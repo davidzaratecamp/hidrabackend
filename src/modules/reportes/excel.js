@@ -55,15 +55,22 @@ const textoAsistencia = (valor) =>
   ({ asistio: 'Asistió', no_asistio: 'No asistió' })[valor] ?? 'Pendiente';
 
 /**
- * Texto de la columna "ESTADO GESTIÓN RECLUTAMIENTO".
- *
- * Mantiene la prioridad del original: si ya hay evaluación pero nadie decidió,
- * eso pesa más que el estado.
+ * Estados que pone Selección, no el reclutador: no van en "ESTADO GESTIÓN
+ * RECLUTAMIENTO" (pedido de negocio, §11.18). Llegar a cualquiera exige una
+ * citación, así que en su lugar sale "Citado", lo último que hizo el reclutador.
+ */
+const ESTADOS_DE_SELECCION = new Set([
+  'no_asistio', 'entrevistado', 'aprobado', 'rechazado', 'aprobado_final', 'rechazado_final',
+]);
+
+/**
+ * Texto de la columna "ESTADO GESTIÓN RECLUTAMIENTO". Sin citación manda el
+ * motivo de no-citado que eligió el reclutador; con citación, el motivo ya no
+ * aplica (§11.16) y sale el estado, salvo los de Selección.
  */
 function textoEstadoGestion(c) {
-  if (c.evaluacion_total !== null && c.aprobacion_final === null) {
-    return 'Pendiente Decisión Final';
-  }
+  if (!c.fecha_citado && c.estado_gestion) return c.estado_gestion;
+  if (ESTADOS_DE_SELECCION.has(c.estado)) return 'Citado';
   return c.estado_nombre || c.estado || '';
 }
 
@@ -111,11 +118,7 @@ function filaBase(c, fechaValor) {
     // registrado con Citado = No y citado después salía "No" con asistencia y
     // decisión llenas. Misma regla que `resolverCitado` del perfil (§11.12).
     c.citado === true || c.fecha_citado ? 'Sí' : 'No',
-    // "Estado gestión" (catálogo de la reclutadora) solo describe a quien NO
-    // se ha citado. En cuanto existe una citación —al registrar o después, por
-    // Selección— manda el estado real del proceso; si no, un "No contesta" o
-    // "No interesado" viejo se quedaba pegado aunque el candidato avanzara.
-    c.fecha_citado ? textoEstadoGestion(c) : c.estado_gestion || textoEstadoGestion(c),
+    textoEstadoGestion(c),
     // SEGUIMIENTO ASISTENCIA: resultado real del contacto previo a la
     // entrevista (llamada y/o WhatsApp/Global de confirmación), de la ÚLTIMA
     // citación del candidato — sigue editable después de marcar la
