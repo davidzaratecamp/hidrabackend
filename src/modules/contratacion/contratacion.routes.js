@@ -20,7 +20,10 @@ const cancelar = z.object({
   motivo: z.string().trim().min(3).max(255),
 });
 
-/** Rutas de Selección: enviar a contratación y seguir el estado en Gestor. */
+/**
+ * Rutas del rol Contratación (migración 020) y Administrador: enviar a RRHH y
+ * seguir el estado en Gestor. La lista "por contratar" está en `/api/formacion`.
+ */
 function crearContratacionRutas({ contratacionServicio, autenticar }) {
   const router = Router();
   router.use(autenticar, requierePermiso('enviar_contratacion'));

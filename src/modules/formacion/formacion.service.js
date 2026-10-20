@@ -1,12 +1,13 @@
 'use strict';
 
 /**
- * Rol Formación (migración 019): seguimiento de los candidatos que pasan a
- * formación y paso previo al envío a contratación (módulo `contratacion`).
+ * Formación y cola de Contratación (migraciones 019 y 020): paso previo al
+ * envío a contratación (módulo `contratacion`).
  *
- *   - Agente (citado a formación): asistió Sí/No (razón si No) y activo/baja
- *     (razón si baja).
- *   - Staff (marcado como contratación): solo activo/baja.
+ *   - Formación: Agentes citados a formación. Asistió Sí/No (razón si No) y
+ *     activo/baja (razón si baja).
+ *   - Contratación: Staff marcados como contratación (solo activo/baja, lo
+ *     marca Contratación) y Agentes que pasaron la formación.
  *
  * Todo es informativo: no cambia el estado del candidato en el embudo. Lo que sí
  * cambia es la elegibilidad para enviar a contratación (`motivoNoElegible`).
@@ -17,8 +18,10 @@ const { nombreCompleto } = require('../../shared/utils/nombreCompleto');
 const { esCargoAgente, motivoNoElegible } = require('../contratacion/contratacion.reglas');
 const {
   enFormacion,
+  porContratar,
   motivoNoAsistencia,
   motivoNoEstado,
+  motivoNoEstadoStaff,
   debeLimpiarActivo,
 } = require('./formacion.reglas');
 
@@ -61,11 +64,32 @@ function crearFormacionServicio({ formacionRepo, uow }) {
     return datos;
   }
 
+  /** Activo/baja: el mismo dato para Agentes (Formación) y Staff (Contratación). */
+  async function guardarEstado(candidatoId, { estado, razon }, usuario, motivoNo) {
+    if (estado === 'baja' && !razon) {
+      throw HttpError.peticionInvalida('Dar de baja exige indicar la razón', { codigo: 'RAZON_REQUERIDA' });
+    }
+    await uow.ejecutar(async ({ formacionRepo: repo }) => {
+      const datos = await cargarParaEditar(repo, candidatoId);
+      const motivo = motivoNo(datos, estado);
+      if (motivo) throw HttpError.conflicto(motivo, { codigo: 'FORMACION_NO_APLICA' });
+
+      await repo.guardarEstado({ candidatoId, estado, razon, usuarioId: usuario.id });
+    });
+    return aVista(await formacionRepo.buscar(candidatoId));
+  }
+
   return {
-    /** Candidatos en formación, todavía sin enviar a contratación. */
+    /** Agentes en formación, todavía sin enviar a contratación (rol Formación). */
     async listar() {
       const filas = await formacionRepo.pendientesDeEnviar();
       return filas.filter(enFormacion).map(aVista);
+    },
+
+    /** Staff y Agentes que pasaron la formación, sin enviar todavía (rol Contratación). */
+    async listarPorContratar() {
+      const filas = await formacionRepo.pendientesDeEnviar();
+      return filas.filter(porContratar).map(aVista);
     },
 
     async registrarAsistencia(candidatoId, { asistio, razon }, usuario) {
@@ -83,19 +107,12 @@ function crearFormacionServicio({ formacionRepo, uow }) {
       return aVista(await formacionRepo.buscar(candidatoId));
     },
 
-    async registrarEstado(candidatoId, { estado, razon }, usuario) {
-      if (estado === 'baja' && !razon) {
-        throw HttpError.peticionInvalida('Dar de baja exige indicar la razón', { codigo: 'RAZON_REQUERIDA' });
-      }
-      await uow.ejecutar(async ({ formacionRepo: repo }) => {
-        const datos = await cargarParaEditar(repo, candidatoId);
-        const motivo = motivoNoEstado(datos, estado);
-        if (motivo) throw HttpError.conflicto(motivo, { codigo: 'FORMACION_NO_APLICA' });
+    /** Activo/baja de un Agente en formación (rol Formación). */
+    registrarEstado: (candidatoId, datos, usuario) => guardarEstado(candidatoId, datos, usuario, motivoNoEstado),
 
-        await repo.guardarEstado({ candidatoId, estado, razon, usuarioId: usuario.id });
-      });
-      return aVista(await formacionRepo.buscar(candidatoId));
-    },
+    /** Activo/baja de un Staff que pasa a contratación (rol Contratación). */
+    registrarEstadoStaff: (candidatoId, datos, usuario) =>
+      guardarEstado(candidatoId, datos, usuario, motivoNoEstadoStaff),
   };
 }
 

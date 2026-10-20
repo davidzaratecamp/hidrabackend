@@ -36,8 +36,9 @@ function motivoNoElegible(datos) {
   } else if (datos.contratacion !== true) {
     return 'Es Staff y no tiene registrada la contratación';
   }
-  if (datos.estado_formacion === 'baja') return 'Está de baja en formación';
-  if (datos.estado_formacion !== 'activo') return 'Falta marcarlo como activo en formación';
+  // Agente: lo marca Formación; Staff: Contratación (migración 020).
+  if (datos.estado_formacion === 'baja') return 'Está de baja';
+  if (datos.estado_formacion !== 'activo') return 'Falta marcarlo como activo';
   if (!datos.numero_documento) return 'No tiene número de documento';
   if (datos.contratacion_lote_id) return 'Ya fue enviado a contratación en otro lote';
   return null;
