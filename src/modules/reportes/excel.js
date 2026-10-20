@@ -8,9 +8,9 @@
  * conserva exacto: es un documento oficial que se comparte fuera del sistema.
  *
  * Tres columnas mejoran respecto al original:
- *   CITADO  -> ya no se emite 'Sí' fijo para todas las filas: sale de lo que
- *              diligenció la reclutadora al registrar y, si no lo tocó, de si el
- *              candidato tiene realmente una citación.
+ *   CITADO  -> ya no se emite 'Sí' fijo para todas las filas: 'Sí' si la
+ *              reclutadora lo marcó al registrar o si el candidato tiene
+ *              realmente una citación.
  *   FECHA   -> sale de `candidato_citaciones`, que sí tiene quien la escriba.
  *              La columna equivalente del esquema viejo se quedó sin escritor y
  *              por eso el export salía vacío. Desde la migración 009 es la fecha
@@ -107,11 +107,10 @@ function filaBase(c, fechaValor) {
     whatsapp,
     // PERFIL y CITADO se capturan desde 2026-08-30 en el registro (migración 007).
     c.perfil || '',
-    // Manda lo que diligenció la reclutadora al registrar; si no lo tocó, se
-    // cae a si tiene citación. Los dos caminos coinciden desde la migración
-    // 009 —marcar Citado = Sí crea la citación—, pero el respaldo cubre a los
-    // candidatos que citó Selección después del registro.
-    c.citado === null || c.citado === undefined ? (c.fecha_citado ? 'Sí' : 'No') : siNo(c.citado),
+    // Sí si se marcó al registrar O si tiene una citación real: un candidato
+    // registrado con Citado = No y citado después salía "No" con asistencia y
+    // decisión llenas. Misma regla que `resolverCitado` del perfil (§11.12).
+    c.citado === true || c.fecha_citado ? 'Sí' : 'No',
     // "Estado gestión" (catálogo de la reclutadora) solo describe a quien NO
     // se ha citado. En cuanto existe una citación —al registrar o después, por
     // Selección— manda el estado real del proceso; si no, un "No contesta" o

@@ -169,3 +169,9 @@ Otros archivos notables: `NuevoCandidato_clean.jsx` en `components/reclutador/` 
 - **Clínica Agentes (2026-10-02):** "Pendientes de decisión" y "Rechazados en evaluación" vacías en
   producción **no es bug** — son colas por estado actual (`aprobado`/`rechazado`) y todos los
   evaluados ya tenían decisión final. Diagnóstico y cambios ofrecidos en `restructuracion.md` §11.14.
+- **Hoja de vida sin generar → 404 en Hydra y sin registro en FirmaCloud (2026-10-16):** era un
+  salto de línea en un campo de texto (`WinAnsi cannot encode`), no el cargo Staff. Corregido con
+  `sanitizeForPdf` en `pdfFillHelpers.js`. Los afectados se reenvían a firma. El proceso PM2 es
+  `hidra-backend`. Detalle en `restructuracion.md` §11.15.
+- **Excel "ESTADO GESTIÓN RECLUTAMIENTO" (2026-10-16) y CITADO (2026-10-20):** si el candidato tiene citación, ESTADO GESTIÓN muestra el
+  estado real del proceso y no el motivo de no-citado, y CITADO sale Sí. `restructuracion.md` §11.16 y §11.17.
