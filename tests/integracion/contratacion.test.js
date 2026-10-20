@@ -34,6 +34,7 @@ let tokenAdmin;
 let tokenReclutamiento;
 let tokenSeleccion;
 let tokenFormacion;
+let tokenContratacion;
 const usuariosCreados = [];
 const candidatosCreados = [];
 const lotesCreados = [];
@@ -97,14 +98,18 @@ async function citarFormacion(id) {
   expect(res.status).toBe(200);
 }
 
-/** Formación: asistió (si es Agente) y activo. Requisito para enviar a contratación. */
+/**
+ * Asistió y activo (Agente, lo marca Formación) o solo activo (Staff, lo marca
+ * Contratación). Requisito para enviar a contratación.
+ */
 async function marcarFormacion(id, { agente = true, token = tokenAdmin } = {}) {
   const cabeceras = { Authorization: `Bearer ${token}` };
   if (agente) {
     const res = await request(app).put(`/api/formacion/candidatos/${id}/asistencia`).set(cabeceras).send({ asistio: true });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
   }
-  const res = await request(app).put(`/api/formacion/candidatos/${id}/estado`).set(cabeceras).send({ estado: 'activo' });
+  const ruta = agente ? `/api/formacion/candidatos/${id}/estado` : `/api/formacion/por-contratar/${id}/estado`;
+  const res = await request(app).put(ruta).set(cabeceras).send({ estado: 'activo' });
   expect(res.status, JSON.stringify(res.body)).toBe(200);
 }
 
@@ -132,6 +137,7 @@ beforeAll(async () => {
   tokenReclutamiento = await crearUsuario({ email: correo('rec'), roles: ['reclutamiento'] });
   tokenSeleccion = await crearUsuario({ email: correo('sel'), roles: ['seleccion'] });
   tokenFormacion = await crearUsuario({ email: correo('form'), roles: ['formacion'] });
+  tokenContratacion = await crearUsuario({ email: correo('contr'), roles: ['contratacion'] });
 }, 30_000);
 
 afterAll(async () => {
@@ -361,16 +367,19 @@ describe('Contratación en Gestor — Fase 5 (envío) y Fase 6 (avisos)', () => 
   });
 });
 
-describe('Rol Formación (migración 019)', () => {
+describe('Roles Formación y Contratación (migraciones 019 y 020)', () => {
   let agente;  // Agente aprobado y citado a formación
   let staff;   // Staff aprobado y marcado como contratación
-  let sinPaso; // Agente aprobado, sin citación: no está en formación
+  let sinPaso; // Agente aprobado, sin citación: no está en ninguna cola
   const comoFormacion = () => ({ Authorization: `Bearer ${tokenFormacion}` });
-  const enLista = async (id) => {
-    const res = await request(app).get('/api/formacion/candidatos').set(comoFormacion());
+  const comoContratacion = () => ({ Authorization: `Bearer ${tokenContratacion}` });
+  const buscarEn = async (ruta, cabeceras, id) => {
+    const res = await request(app).get(ruta).set(cabeceras);
     expect(res.status).toBe(200);
     return res.body.datos.find((c) => c.id === id);
   };
+  const enFormacion = (id) => buscarEn('/api/formacion/candidatos', comoFormacion(), id);
+  const porContratar = (id) => buscarEn('/api/formacion/por-contratar', comoContratacion(), id);
 
   it('prepara un Agente citado, un Staff con contratación y un aprobado sin paso', async () => {
     agente = await crearCandidato('Formacion Agente Prueba');
@@ -382,25 +391,41 @@ describe('Rol Formación (migración 019)', () => {
     expect(res.status).toBe(200);
   }, 60_000);
 
-  it('Selección ya no envía a contratación; Formación sí; Reclutamiento no ve Formación', async () => {
+  it('cada rol ve solo su cola: Formación no envía ni ve la de Contratación, y al revés', async () => {
+    const get = (ruta, cabeceras) => request(app).get(ruta).set(cabeceras).then((r) => r.status);
     const sel = { Authorization: `Bearer ${tokenSeleccion}` };
-    expect((await request(app).get('/api/contratacion/lotes').set(sel)).status).toBe(403);
-    expect((await request(app).get('/api/formacion/candidatos').set(sel)).status).toBe(403);
-    expect((await request(app).get('/api/contratacion/lotes').set(comoFormacion())).status).toBe(200);
-    expect((await request(app).get('/api/formacion/candidatos').set({ Authorization: `Bearer ${tokenReclutamiento}` })).status).toBe(403);
+    const rec = { Authorization: `Bearer ${tokenReclutamiento}` };
+
+    expect(await get('/api/formacion/candidatos', comoFormacion())).toBe(200);
+    expect(await get('/api/formacion/por-contratar', comoFormacion())).toBe(403);
+    expect(await get('/api/contratacion/lotes', comoFormacion())).toBe(403);
+
+    expect(await get('/api/formacion/por-contratar', comoContratacion())).toBe(200);
+    expect(await get('/api/contratacion/lotes', comoContratacion())).toBe(200);
+    expect(await get('/api/formacion/candidatos', comoContratacion())).toBe(403);
+
+    for (const otro of [sel, rec]) {
+      expect(await get('/api/formacion/candidatos', otro)).toBe(403);
+      expect(await get('/api/formacion/por-contratar', otro)).toBe(403);
+      expect(await get('/api/contratacion/lotes', otro)).toBe(403);
+    }
   });
 
-  it('lista solo a quienes pasan a formación, con lo que les falta', async () => {
-    const a = await enLista(agente);
-    const s = await enLista(staff);
-    expect(await enLista(sinPaso)).toBeUndefined();
+  it('Formación lista solo Agentes; Contratación, al Staff y todavía no al Agente', async () => {
+    const a = await enFormacion(agente);
     expect(a).toMatchObject({ tipo: 'agente', elegible: false, asistencia: { asistio: null } });
     expect(a.motivoNoElegible).toMatch(/asistencia/);
+    expect(await enFormacion(staff)).toBeUndefined();
+    expect(await enFormacion(sinPaso)).toBeUndefined();
+
+    const s = await porContratar(staff);
     expect(s).toMatchObject({ tipo: 'staff', elegible: false, asistencia: null });
     expect(s.motivoNoElegible).toMatch(/activo/);
+    expect(await porContratar(agente)).toBeUndefined();
+    expect(await porContratar(sinPaso)).toBeUndefined();
   });
 
-  it('asistencia: solo Agente, y "No asistió" exige razón', async () => {
+  it('asistencia: solo Agentes en formación, y "No asistió" exige razón', async () => {
     const put = (id, cuerpo) => request(app).put(`/api/formacion/candidatos/${id}/asistencia`).set(comoFormacion()).send(cuerpo);
     expect((await put(staff, { asistio: true })).status).toBe(409);
     expect((await put(sinPaso, { asistio: true })).status).toBe(409);
@@ -427,13 +452,33 @@ describe('Rol Formación (migración 019)', () => {
       .set(comoFormacion())
       .send({ asistio: false, razon: 'Se corrigió la asistencia' });
     expect(noAsistio.body.datos.formacion.estado).toBeNull();
+    expect(await porContratar(agente)).toBeUndefined();
 
     await request(app).put(`/api/formacion/candidatos/${agente}/asistencia`).set(comoFormacion()).send({ asistio: true });
     expect((await estado({ estado: 'activo' })).status).toBe(200);
   });
 
-  it('baja exige razón, no cambia el estado del embudo y saca de los elegibles', async () => {
-    const estado = (cuerpo) => request(app).put(`/api/formacion/candidatos/${staff}/estado`).set(comoFormacion()).send(cuerpo);
+  it('el Agente que pasó la formación (asistió y activo) aparece en la cola de Contratación', async () => {
+    const a = await porContratar(agente);
+    expect(a).toMatchObject({ tipo: 'agente', elegible: true });
+    // Formación lo sigue viendo hasta que se envíe, por si hay que corregir.
+    expect(await enFormacion(agente)).toBeDefined();
+  });
+
+  it('activo/baja de Staff lo marca Contratación, no Formación; baja exige razón y no cambia el embudo', async () => {
+    const porFormacion = await request(app)
+      .put(`/api/formacion/candidatos/${staff}/estado`)
+      .set(comoFormacion())
+      .send({ estado: 'activo' });
+    expect(porFormacion.status).toBe(409);
+    // Contratación no marca Agentes: eso es de Formación.
+    const agentePorContratacion = await request(app)
+      .put(`/api/formacion/por-contratar/${agente}/estado`)
+      .set(comoContratacion())
+      .send({ estado: 'baja', razon: 'No aplica' });
+    expect(agentePorContratacion.status).toBe(409);
+
+    const estado = (cuerpo) => request(app).put(`/api/formacion/por-contratar/${staff}/estado`).set(comoContratacion()).send(cuerpo);
     expect((await estado({ estado: 'baja' })).status).toBe(400);
     const baja = await estado({ estado: 'baja', razon: 'Renunció en la primera semana' });
     expect(baja.status).toBe(200);
@@ -445,18 +490,20 @@ describe('Rol Formación (migración 019)', () => {
     expect(activo.body.datos).toMatchObject({ elegible: true, formacion: { estado: 'activo', razon: null } });
   });
 
-  it('Formación envía a los activos; ya enviados salen de la lista y no se pueden editar', async () => {
-    const res = await request(app)
-      .post('/api/contratacion/lotes')
-      .set(comoFormacion())
-      .send({ nombre: 'Lote desde Formación', candidatoIds: [agente, staff] });
+  it('Contratación envía a RRHH; Formación no; ya enviados salen de las colas y no se editan', async () => {
+    const cuerpo = { nombre: 'Lote desde Contratación', candidatoIds: [agente, staff] };
+    expect((await request(app).post('/api/contratacion/lotes').set(comoFormacion()).send(cuerpo)).status).toBe(403);
+
+    const res = await request(app).post('/api/contratacion/lotes').set(comoContratacion()).send(cuerpo);
     expect(res.status).toBe(201);
     lotesCreados.push(res.body.datos.id);
 
-    expect(await enLista(agente)).toBeUndefined();
+    expect(await enFormacion(agente)).toBeUndefined();
+    expect(await porContratar(agente)).toBeUndefined();
+    expect(await porContratar(staff)).toBeUndefined();
     const editar = await request(app)
-      .put(`/api/formacion/candidatos/${staff}/estado`)
-      .set(comoFormacion())
+      .put(`/api/formacion/por-contratar/${staff}/estado`)
+      .set(comoContratacion())
       .send({ estado: 'baja', razon: 'Intento tardío' });
     expect(editar.status).toBe(409);
     expect(editar.body.error.mensaje).toMatch(/ya fue enviado/);

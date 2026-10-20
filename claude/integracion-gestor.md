@@ -14,34 +14,48 @@ prueba integrada, §14 despliegue). Este archivo es solo el mapa del lado de Hyd
 ## Flujo
 
 ```
-Formación: POST /api/contratacion/lotes ─► outbox (contratacion_envios) ─► Gestor /lotes
+Contratación: POST /api/contratacion/lotes ─► outbox (contratacion_envios) ─► Gestor /lotes
                                                                               │ RRHH completa,
                                                                               │ verifica, registra
 Hydra: candidato → "contratado"  ◄── POST /api/integraciones/gestor/v1/contrataciones (firmado)
        nota "descartado"         ◄── POST /api/integraciones/gestor/v1/descartes      (firmado)
 ```
 
-## Rol Formación (migración 019, 2026-10-02)
+## Roles Formación y Contratación (migraciones 019 y 020)
 
-Quien envía a contratación es el rol **Formación** (y Administrador); Selección perdió
-`enviar_contratacion`. Formación solo ve a quienes pasan a formación y no se han enviado:
-- **Agente** aprobado final y citado a formación: marca **asistió Sí/No** (razón si No) y
-  **activo/baja** (razón si baja). Activo exige asistencia en Sí; marcar "No asistió" borra el
-  activo.
-- **Staff** aprobado final y marcado como contratación: solo **activo/baja**.
+Desde la **020 (2026-10-20)** son dos roles; antes (019) Formación hacía todo y antes de eso,
+Selección. Ninguno de los dos tiene `ver_candidatos`: no ven el listado ni los perfiles.
 
-Todo es informativo (`candidato_formacion`): no cambia el estado del embudo. Una vez enviado, ya no
-se edita (para deshacer, "cancelar" en el lote). Permiso `gestionar_formacion` (Formación y
-Administrador). Formación no tiene `ver_candidatos`: no ve el listado ni los perfiles.
-Backend: `src/modules/formacion/` (`GET /api/formacion/candidatos`,
-`PUT /candidatos/:id/asistencia`, `PUT /candidatos/:id/estado`).
+- **Formación** (permiso `gestionar_formacion`): solo **Agentes**, de cualquier campaña, aprobados
+  finales y citados a formación. Marca **asistió Sí/No** (razón si No) y **activo/baja** (razón si
+  baja). Activo exige asistencia en Sí; marcar "No asistió" borra el activo. Ya no envía ni ve
+  Staff. Los sigue viendo hasta que se envían, por si hay que corregir.
+- **Contratación** (permiso `enviar_contratacion`): ve a quienes se van a contratar —**Staff**
+  aprobados finales y marcados como contratación, a los que marca **activo/baja**, y **Agentes que
+  pasaron la formación** (asistieron y activos)— y es quien **envía los lotes a RRHH**.
+
+Administrador tiene los dos permisos. Todo es informativo (`candidato_formacion`, el mismo dato
+para los dos roles): no cambia el estado del embudo. Una vez enviado, ya no se edita (para deshacer,
+"cancelar" en el lote). Las reglas de cada cola están en `formacion.reglas.js` (`enFormacion`,
+`porContratar`); la elegibilidad para enviar (`motivoNoElegible`) no cambió.
+
+Backend: `src/modules/formacion/`, con permiso por ruta:
+- Formación: `GET /api/formacion/candidatos`, `PUT /candidatos/:id/asistencia`,
+  `PUT /candidatos/:id/estado`.
+- Contratación: `GET /api/formacion/por-contratar`, `PUT /por-contratar/:id/estado` (solo Staff).
+  Las dos colas viven en el mismo módulo porque comparten `candidato_formacion`.
 
 ## Pantallas (frontend, repo `ReclutamientoFronted/hidrafrontend`)
 
-- **Formación** (`/formacion`, `src/components/formacion/Formacion.jsx`): "En formación"
-  (asistencia, activo/baja, casillas de los listos + "Enviar a contratación") y "Lotes enviados".
-- **Detalle del lote** (`/formacion/lotes/:loteId`): estado de cada candidato en Gestor,
+- **Formación** (`/formacion`, `src/components/formacion/Formacion.jsx`): Agentes en formación,
+  asistencia y activo/baja. Sin envío.
+- **Contratación** (`/contratacion`, `src/components/contratacion/PantallaContratacion.jsx`):
+  "Por contratar" (Staff con su activo/baja, Agentes formados, casillas de los listos + "Enviar a
+  contratación") y "Lotes enviados".
+- **Detalle del lote** (`/contratacion/lotes/:loteId`): estado de cada candidato en Gestor,
   reenviar, cancelar y reintentar envíos; se actualiza sola mientras hay algo en camino.
+- Las celdas y el modal de asistencia/activo-baja son compartidos: `formacion/marcas.jsx` y
+  `formacion/marcas.config.js`.
 - El historial del candidato muestra "Gestor Técnico (automático)" en el paso a `contratado`.
 
 ## Dónde está
@@ -50,6 +64,8 @@ Backend: `src/modules/formacion/` (`GET /api/formacion/candidatos`,
   `contratacion_envios` y el permiso `enviar_contratacion`.
 - `db/migrations/019_rol_formacion.sql`: rol `formacion`, permiso `gestionar_formacion`, tabla
   `candidato_formacion`; `enviar_contratacion` pasa de Selección a Formación. Aplicada solo en local.
+- `db/migrations/020_rol_contratacion.sql`: rol `contratacion`; `enviar_contratacion` pasa de
+  Formación a Contratación. Sin cambios de esquema. Aplicada solo en local.
 - `src/modules/contratacion/`: reglas puras (`contratacion.reglas.js`), repositorio, servicio y
   rutas.
 - `src/modules/integraciones/gestor/`: adaptador HTTP y en memoria; middleware `autenticarGestor`.

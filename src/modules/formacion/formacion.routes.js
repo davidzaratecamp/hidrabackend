@@ -18,19 +18,37 @@ const estado = z.object({
   razon: z.string().trim().min(3).max(2000).optional(),
 });
 
-/** Rol Formación (migración 019). El envío a contratación vive en `/api/contratacion`. */
+/**
+ * Formación y cola de Contratación (migraciones 019 y 020). Las dos colas viven
+ * aquí porque comparten los datos (`candidato_formacion`); el permiso va por
+ * ruta. El envío de lotes a RRHH vive en `/api/contratacion`.
+ */
 function crearFormacionRutas({ formacionServicio, autenticar }) {
   const router = Router();
-  router.use(autenticar, requierePermiso('gestionar_formacion'));
+  router.use(autenticar);
 
-  router.get('/candidatos', async (_req, res) => ok(res, await formacionServicio.listar()));
+  // Rol Formación: Agentes en formación.
+  const formacion = requierePermiso('gestionar_formacion');
 
-  router.put('/candidatos/:id/asistencia', validar({ params, body: asistencia }), async (req, res) =>
+  router.get('/candidatos', formacion, async (_req, res) => ok(res, await formacionServicio.listar()));
+
+  router.put('/candidatos/:id/asistencia', formacion, validar({ params, body: asistencia }), async (req, res) =>
     ok(res, await formacionServicio.registrarAsistencia(req.params.id, req.body, req.usuario))
   );
 
-  router.put('/candidatos/:id/estado', validar({ params, body: estado }), async (req, res) =>
+  router.put('/candidatos/:id/estado', formacion, validar({ params, body: estado }), async (req, res) =>
     ok(res, await formacionServicio.registrarEstado(req.params.id, req.body, req.usuario))
+  );
+
+  // Rol Contratación: Staff y Agentes que pasaron la formación, por enviar a RRHH.
+  const contratacion = requierePermiso('enviar_contratacion');
+
+  router.get('/por-contratar', contratacion, async (_req, res) =>
+    ok(res, await formacionServicio.listarPorContratar())
+  );
+
+  router.put('/por-contratar/:id/estado', contratacion, validar({ params, body: estado }), async (req, res) =>
+    ok(res, await formacionServicio.registrarEstadoStaff(req.params.id, req.body, req.usuario))
   );
 
   return router;

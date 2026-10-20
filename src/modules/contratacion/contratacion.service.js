@@ -3,7 +3,8 @@
 /**
  * Contratación en el Gestor Técnico (RRHH).
  *
- * Fase 5 (Hydra → Gestor): Selección arma un lote con candidatos aprobados; se
+ * Fase 5 (Hydra → Gestor): Contratación (rol de la migración 020) arma un lote
+ * con candidatos aprobados; se
  * guarda junto con su envío pendiente (outbox) en una sola transacción, y el
  * despachador lo entrega a Gestor con reintentos.
  *

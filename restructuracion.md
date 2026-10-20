@@ -1394,3 +1394,43 @@ Rechazado); 9 ya decían CITADO; las 417 con motivo de no-citado no cambian. El 
 **Prueba**: `reportes.test.js` verifica que un candidato registrado con "#Errado", citado y llevado
 hasta la decisión final sale con CITADO en esa columna. Suite de reportes: 16/17 (la falla
 preexistente de siempre).
+
+### 11.19 Rol Contratación: Formación solo ve Agentes; Contratación envía a RRHH (2026-10-20)
+
+Pedido del usuario: el rol Formación solo debe ver **Agentes** (de cualquier campaña), que son los
+únicos que pasan por formación. Para los **Staff** que pasan a contratación y los **Agentes que
+pasaron la formación**, un rol nuevo, **Contratación**, que es el que envía los candidatos a RRHH
+(Gestor Técnico). Decisiones del usuario: el rol se llama "Contratación", y el activo/baja de Staff
+se conserva y lo marca Contratación.
+
+**Migración `020_rol_contratacion.sql`** (aplicada solo en local): rol `contratacion`;
+`enviar_contratacion` pasa de Formación a Contratación (Administrador lo conserva). Sin cambios de
+esquema: el activo/baja de Staff sigue en `candidato_formacion`, solo cambia quién lo marca.
+
+**Backend** (`src/modules/formacion/`):
+- `formacion.reglas.js`: `enFormacion` ahora es solo Agentes citados a formación; nuevas
+  `porContratar` (Staff con contratación + Agentes que asistieron y están activos) y
+  `motivoNoEstadoStaff`.
+- `formacion.routes.js`: permiso por ruta. Formación: `GET /api/formacion/candidatos` y los `PUT`
+  de asistencia/estado. Contratación: `GET /api/formacion/por-contratar` y
+  `PUT /api/formacion/por-contratar/:id/estado` (solo Staff).
+- `contratacion.reglas.js::motivoNoElegible`: misma regla, textos sin "en formación" ("Está de
+  baja", "Falta marcarlo como activo") porque ahora también aplican a Staff.
+
+**Frontend**: `/formacion` (solo Agentes, sin envío) y nueva `/contratacion`
+(`PantallaContratacion.jsx`: "Por contratar" + "Lotes enviados"); el detalle del lote pasa a
+`/contratacion/lotes/:loteId`. Menú: "Formación" con `gestionar_formacion`, "Contratación" con
+`enviar_contratacion`; cada rol aterriza en su pantalla (`RoleRedirect`). Detalle completo en
+`claude/integracion-gestor.md`.
+
+**Pruebas**: `tests/unidad/formacion.reglas.test.js` y el bloque "Roles Formación y Contratación"
+de `tests/integracion/contratacion.test.js` (qué ve cada rol, quién marca qué, quién envía).
+Suite completa: 185/186 (la falla preexistente de `reportes.test.js`). Frontend: lint y build OK; no
+probado en navegador.
+
+**Para desplegar**: aplicar 018, 019 y 020 en producción si no están, crear los usuarios con el rol
+Contratación y quitarle a los de Formación lo que ya no les toca (la migración lo hace sola). Ojo:
+`npm run migrate` en local (Windows) marca 002–019 como "MODIFICADA" porque `core.autocrlf=true`
+convierte los `.sql` a CRLF y cambia el checksum; la 020 se aplicó con el mismo procedimiento del
+runner (transacción + `migraciones_aplicadas`) solo para ese archivo. En el servidor (Linux) no
+debería pasar.

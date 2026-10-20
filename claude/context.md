@@ -162,10 +162,11 @@ Otros archivos notables: `NuevoCandidato_clean.jsx` en `components/reclutador/` 
 - CORS habilitado solo para `http://localhost:5173/5174/5175` y `http://200.91.204.54` (IP de producción).
 - Los formularios de candidato (`/candidato/*` en frontend) son rutas públicas basadas en token, no requieren login.
 - **Integración con el Gestor Técnico (2026-10-01):** los aprobados se envían a RRHH de Gestor desde
-  Selección → "Contratación" (`src/components/contratacion/` en el frontend); el candidato pasa a
-  `contratado` solo con el aviso de Gestor. Mapa del lado de Hydra en
+  la pantalla "Contratación" (`/contratacion`), del rol **Contratación**; el rol **Formación** solo
+  ve Agentes en formación (2026-10-20, migración 020, `restructuracion.md` §11.19). El candidato
+  pasa a `contratado` solo con el aviso de Gestor. Mapa del lado de Hydra en
   [`integracion-gestor.md`](integracion-gestor.md). El plan completo y la guía de despliegue están
-  en `conexionhydra.md`, en el repo de Gestor. Migración `018`, aplicada solo en local.
+  en `conexionhydra.md`, en el repo de Gestor. Migraciones `018`–`020`, aplicadas solo en local.
 - **Clínica Agentes (2026-10-02):** "Pendientes de decisión" y "Rechazados en evaluación" vacías en
   producción **no es bug** — son colas por estado actual (`aprobado`/`rechazado`) y todos los
   evaluados ya tenían decisión final. Diagnóstico y cambios ofrecidos en `restructuracion.md` §11.14.
