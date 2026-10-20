@@ -173,5 +173,6 @@ Otros archivos notables: `NuevoCandidato_clean.jsx` en `components/reclutador/` 
   salto de línea en un campo de texto (`WinAnsi cannot encode`), no el cargo Staff. Corregido con
   `sanitizeForPdf` en `pdfFillHelpers.js`. Los afectados se reenvían a firma. El proceso PM2 es
   `hidra-backend`. Detalle en `restructuracion.md` §11.15.
-- **Excel "ESTADO GESTIÓN RECLUTAMIENTO" (2026-10-16) y CITADO (2026-10-20):** si el candidato tiene citación, ESTADO GESTIÓN muestra el
-  estado real del proceso y no el motivo de no-citado, y CITADO sale Sí. `restructuracion.md` §11.16 y §11.17.
+- **Excel "ESTADO GESTIÓN RECLUTAMIENTO" y CITADO (2026-10-20):** ESTADO GESTIÓN solo muestra lo que coloca el reclutador:
+  motivo de no-citado, o el estado salvo los de Selección (No asistió…Rechazado final → CITADO). CITADO sale Sí
+  si tiene citación. `restructuracion.md` §11.16 a §11.18.

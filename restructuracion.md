@@ -1285,6 +1285,9 @@ FirmaCloud).
 
 ### 11.16 Excel: "ESTADO GESTIÓN RECLUTAMIENTO" mostraba un motivo de no-citado a candidatos ya citados (2026-10-16)
 
+> ⚠️ La regla del export de esta sección (con citación → estado real del proceso) fue reemplazada
+> en §11.18: los estados de Selección ahora salen como CITADO.
+
 Reportado en producción con el export "todos" (`todos-2026-10-13-a-2026-10-14.xlsx`): una candidata
 en `aprobado_final` (asistió y aprobó todo) salía con **"NO INTERESADO / VENTAS"** en esa columna.
 Esa columna sale del catálogo `estados_gestion_reclutamiento`, que es el **motivo por el que NO se
@@ -1363,3 +1366,31 @@ preexistente `promedia la evaluación por criterio`).
 **Pendiente:** commitear y desplegar (`git pull` + `pm2 restart hidra-backend`; **no reiniciar el
 servidor**, ver §11.10). Si negocio quiere seguir viendo lo que marcó la reclutadora al registrar,
 habría que agregarlo como columna aparte.
+
+### 11.18 Excel: ESTADO GESTIÓN RECLUTAMIENTO ya no muestra estados de Selección (2026-10-20)
+
+Pedido del usuario: esa columna mostraba estados que el reclutador no coloca. Hay que quitar
+**No asistió, Entrevistado, Aprobado, Rechazado, Aprobado final y Rechazado final** y dejar los
+demás, sea quien sea el que descargue (reclutador o administrador). Las demás columnas (ASISTE
+ENTREVISTA, APROBADO, etc.) no cambian.
+
+**Regla** (`excel.js::textoEstadoGestion`, común a los reportes todos, citados y aprobados):
+1. Sin citación y con motivo → el motivo del catálogo `estados_gestion_reclutamiento` ("No
+   contesta", "#Errado", "No apto / …", "No interesado / …"), como antes.
+2. Estado en `ESTADOS_DE_SELECCION` (los seis de arriba) → **CITADO**. Llegar a cualquiera exige
+   una citación, y citar es lo último que hizo el reclutador (§11.1).
+3. Cualquier otro estado → su nombre, como antes (Citado, Contratado, y los de contacto/formularios
+   si no hay motivo).
+
+"Pendiente Decisión Final" (evaluado sin decisión) también desaparece: solo se daba en
+`aprobado`/`rechazado`, que ahora salen CITADO. Se mantiene de §11.16 que un motivo de no-citado
+no se muestra si el candidato tiene citación.
+
+**Impacto sobre `todos-2026-10-01-a-2026-10-19.xlsx` (781 filas)**: 355 filas pasan de un estado de
+Selección a CITADO (169 No asistió, 119 Aprobado final, 52 Entrevistado, 14 Rechazado final, 1
+Rechazado); 9 ya decían CITADO; las 417 con motivo de no-citado no cambian. El Excel del histórico
+(`historico.excel.js`, base `noviembrehidra`) tiene su propio `textoEstadoGestion` y no se tocó.
+
+**Prueba**: `reportes.test.js` verifica que un candidato registrado con "#Errado", citado y llevado
+hasta la decisión final sale con CITADO en esa columna. Suite de reportes: 16/17 (la falla
+preexistente de siempre).

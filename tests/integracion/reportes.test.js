@@ -233,9 +233,10 @@ describe('Exportación a Excel', () => {
     expect(fila.getCell(13).value).toBe('COMERCIAL CON EXPERIENCIA');
     // CITADO: se registró con Citado = No, pero tiene una citación real.
     expect(fila.getCell(14).value).toBe('SÍ');
-    // ESTADO GESTIÓN: con citación manda el estado real, no el '#Errado'
-    // del registro (§11.16).
-    expect(fila.getCell(15).value).not.toBe('#ERRADO');
+    // ESTADO GESTIÓN: solo lo que coloca el reclutador. Con citación sale
+    // CITADO —ni el '#Errado' del registro ni un estado de Selección como
+    // APROBADO FINAL— (§11.18).
+    expect(fila.getCell(15).value).toBe('CITADO');
     // SEGUIMIENTO ASISTENCIA (columnas 16/17): el candidato del beforeAll
     // respondió la llamada antes de la entrevista (SÍ) y el WhatsApp recién
     // DESPUÉS de marcarse la asistencia — el Excel debe salir con el valor
