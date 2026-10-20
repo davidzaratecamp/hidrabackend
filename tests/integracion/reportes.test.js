@@ -95,13 +95,8 @@ async function candidatoCompleto(nombre) {
   const id = creado.body.datos.id;
   candidatosCreados.push(id);
 
-  // `citado` es obligatorio al registrar desde el 2026-09-15, así que ya no
-  // se puede crear un candidato con el campo sin diligenciar por la API — el
-  // fallback de la columna CITADO del Excel (cae a si tiene citación real,
-  // ver excel.js::filaBase) solo aplica a candidatos históricos con la
-  // columna en NULL. Se simula aquí directo en la base para seguir probando
-  // ese camino.
-  await pool.query('UPDATE candidatos SET citado = NULL WHERE id = ?', [id]);
+  // Se registra con Citado = No y se cita más abajo: es el caso real que
+  // salía "No" en el Excel con asistencia y decisión llenas (§11.17).
 
   const avanzar = (estado, motivo) =>
     request(app)
@@ -236,9 +231,11 @@ describe('Exportación a Excel', () => {
     expect(fila.getCell(10).value).toBe('3005551234');
     // PERFIL ya no sale en blanco: se captura en el registro (migración 007).
     expect(fila.getCell(13).value).toBe('COMERCIAL CON EXPERIENCIA');
-    // CITADO deja de ser 'Sí' fijo. Este candidato no lo diligenció, así que
-    // cae a la citación real, que sí existe.
+    // CITADO: se registró con Citado = No, pero tiene una citación real.
     expect(fila.getCell(14).value).toBe('SÍ');
+    // ESTADO GESTIÓN: con citación manda el estado real, no el '#Errado'
+    // del registro (§11.16).
+    expect(fila.getCell(15).value).not.toBe('#ERRADO');
     // SEGUIMIENTO ASISTENCIA (columnas 16/17): el candidato del beforeAll
     // respondió la llamada antes de la entrevista (SÍ) y el WhatsApp recién
     // DESPUÉS de marcarse la asistencia — el Excel debe salir con el valor

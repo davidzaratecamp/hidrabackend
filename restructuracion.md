@@ -680,7 +680,7 @@ llevó a la decisión de reescribir.
 
 ---
 
-## 11. Estado actual y cambios posteriores a este documento (actualizado 2026-10-02)
+## 11. Estado actual y cambios posteriores a este documento (actualizado 2026-10-20)
 
 Este documento se escribió el 2026-08-27, como el contrato inicial de la reescritura. Desde
 entonces la reescritura se ejecutó casi por completo (§7) y, sobre la marcha, se tomaron decisiones
@@ -1252,3 +1252,114 @@ pantalla no filtran por cargo, así que también incluyen Staff.
 Se le ofrecieron dos cambios, **sin decidir todavía**: (1) pestaña "Por evaluar" en Clínica Agentes
 con los Agentes en `entrevistado`; (2) que "Rechazados en evaluación" sea histórico (toda evaluación
 no aprobada, aunque ya tenga decisión final).
+
+### 11.15 Hoja de vida sin generar para dos candidatos de Staff: `WinAnsi cannot encode` (2026-10-16)
+
+Reportado en producción: dos candidatos de cargo Staff (ids **1984** y **2062**) tenían la ficha
+completa en Hydra, pero "Ver hoja de vida"/"Tratamiento de datos" daban **404** y en FirmaCloud no
+había ningún registro de ellos. **No era un problema del cargo Staff** ni de FirmaCloud: el log de
+producción (`pm2 logs hidra-backend`, JSON de pino) mostraba `WinAnsi cannot encode "\n"` al generar
+la hoja de vida. Esos candidatos escribieron "Funciones" en varios renglones en el textarea, y las
+fuentes estándar de `pdf-lib` (Times) solo codifican WinAnsi: un salto de línea, un tab o un emoji
+hace fallar `widthOfTextAtSize`/`drawText`. Eso tumbaba la generación **completa** del PDF, así que
+`enviarAFirmar` (`formulario.service.js`) caía en su `catch` ("Falló el envío a firma electrónica")
+**sin guardar registro de firma**, y nunca se llamaba a FirmaCloud. Que les pasara a dos de Staff
+fue coincidencia de lo que escribieron, no del cargo.
+
+**Corregido** (commit `c5ffc92`, desplegado): `documentos/pdf/pdfFillHelpers.js` tiene un nuevo
+`sanitizeForPdf(value)`, que convierte en espacio todo carácter fuera de WinAnsi (Latin-1 +
+`WINANSI_EXTRA_CHARS`, los de cp1252 0x80-0x9F) y colapsa espacios y saltos con `\s+ → ' '`.
+`drawTextBox` y `drawFit` lo aplican **siempre** antes de medir o dibujar, así que cubre la hoja de
+vida y el tratamiento de datos sin tocar cada campo. Queda exportado por si otro servicio dibuja
+texto sin pasar por estos helpers.
+
+**Para los afectados**, el fix no regenera nada solo: hay que reenviarlos a firma. Se puede usar el
+botón de reenvío de formulario en el perfil (requiere permiso `reenviar_emails`), o
+`POST /api/firma/:id/reenviar` (`reenviarAFirmar`). En "Candidatos" (`ListaCandidatos.jsx`) el
+botón de reenvío está oculto cuando `segmento === 'staff'`.
+
+**Para diagnosticar casos parecidos**: si el candidato no aparece en FirmaCloud, el fallo fue en
+Hydra **antes** del envío. Buscar `Falló el envío a firma electrónica` con su `candidatoId` en
+`pm2 logs hidra-backend` (el proceso se llama `hidra-backend`, en el servidor de Hydra, no en el de
+FirmaCloud).
+
+### 11.16 Excel: "ESTADO GESTIÓN RECLUTAMIENTO" mostraba un motivo de no-citado a candidatos ya citados (2026-10-16)
+
+Reportado en producción con el export "todos" (`todos-2026-10-13-a-2026-10-14.xlsx`): una candidata
+en `aprobado_final` (asistió y aprobó todo) salía con **"NO INTERESADO / VENTAS"** en esa columna.
+Esa columna sale del catálogo `estados_gestion_reclutamiento`, que es el **motivo por el que NO se
+citó** al candidato, y solo tiene sentido con Citado = No. Había dos causas:
+
+1. **En el registro**, el schema (`candidato.schema.js`, `superRefine`) exige `estadoGestion` solo
+   si `citado === false`, pero **nunca lo limpia** si `citado === true`. El frontend
+   (`CandidatoCampos.jsx::cambiarCitado`) sí lo limpia al marcar Sí, pero por la carga masiva
+   (`candidato.importarExcel.js`, donde CITADO y ESTADO GESTIÓN son columnas independientes) o
+   cualquier otro camino se podía guardar Citado = Sí con un motivo.
+2. **En el export**, `excel.js::filaBase` hacía `c.estado_gestion || textoEstadoGestion(c)`: si
+   había motivo guardado, ese ganaba siempre sobre el estado real del proceso. Así, un "No contesta"
+   de un candidato registrado como Citado = No y **citado después por Selección** se quedaba pegado
+   aunque avanzara.
+
+**Corregido** (commit `2f6bdba`):
+- `excel.js::filaBase`: `c.fecha_citado ? textoEstadoGestion(c) : c.estado_gestion || textoEstadoGestion(c)`.
+  Si existe una citación (`fecha_citado` = `created_at` de la **última** citación, de `SELECT_EXCEL`
+  en `reportes.repository.js`), manda el estado real; si no, el motivo como antes. `filaBase` es
+  común a los tres reportes (todos, citados y aprobados), y en los dos últimos todos tienen citación.
+- `candidato.service.js` (crear): `estadoGestionId: datos.citado === true ? null : ref.estadoGestionId ?? null`.
+  Solo afecta registros **nuevos**.
+
+**Impacto verificado sobre el Excel real (178 filas)**: cambian 6 filas, las únicas con citación y
+motivo guardado a la vez. Son la reportada (Citado = Sí + motivo) y 5 registradas con Citado = No y
+citadas después ("No contesta"/"No interesado"/"#Errado" → su estado real). Las otras 172 no
+cambian. La columna CITADO no se tocó en este cambio (sí en el siguiente, ver §11.17).
+**No se modifica ningún dato**: el motivo viejo sigue en la BD y solo deja de mostrarse en esa
+columna. Si negocio quiere ver el motivo original de los citados después, habría que agregarlo como
+columna aparte. El histórico (`noviembrehidra`) usa otro código y no se tocó.
+
+**Limpieza opcional de datos** (no aplicada; solo los Citado = Sí, porque los Citado = No citados
+después tienen un motivo que sí fue cierto al registrar):
+
+```sql
+SELECT id, estado_gestion_id FROM candidatos WHERE citado = 1 AND estado_gestion_id IS NOT NULL;
+UPDATE candidatos SET estado_gestion_id = NULL WHERE citado = 1 AND estado_gestion_id IS NOT NULL;
+```
+
+**Deuda conocida que sigue igual**: el schema todavía no limpia `estadoGestion` cuando
+`citado === true` en la **edición** del candidato; solo lo corrige la creación. Además, en local
+fallaban de antes un lint (`'nombre' is assigned a value but never used`, `candidato.service.js`) y
+un test (`reportes.test.js > promedia la evaluación por criterio`); ninguno de los dos viene de
+estos cambios (180/181 tests pasan).
+
+### 11.17 Excel: CITADO salía "No" a candidatos que asistieron a la entrevista (2026-10-20)
+
+Reportado con el export "todos" de producción (`todos-2026-10-01-a-2026-10-19.xlsx`): el candidato
+Cristian Enrique Castillo Álvarez (CC 1005582623, registrado el 08/10/2026) salía con **CITADO = NO**
+pero **ASISTE ENTREVISTA = ASISTIÓ**, ESTADO GESTIÓN = RECHAZADO FINAL y decisión final llena.
+
+**Causa**: la misma de §11.12, pero en el Excel. La columna `candidatos.citado` solo se escribe al
+registrar y nunca se actualiza si el candidato se cita después (`candidato_citaciones`). El export
+hacía `c.citado === null ? (c.fecha_citado ? 'Sí' : 'No') : siNo(c.citado)`: el respaldo a la
+citación real solo aplicaba con `citado` en `NULL`, y desde que el campo es obligatorio al registrar
+(2026-09-15) nunca es `NULL`. Un candidato registrado con Citado = No ("No contesta", "No interesado",
+etc.) y citado después quedaba con "No" para siempre. El perfil ya lo resolvía bien desde §11.12
+(`candidato.repository.js::resolverCitado`); el Excel no.
+
+**Corregido** en `excel.js::filaBase`: `c.citado === true || c.fecha_citado ? 'Sí' : 'No'`. Es la
+misma regla que `resolverCitado`: Sí si se marcó al registrar **o** si existe una citación. Va en la
+misma línea que §11.16: con citación, CITADO y ESTADO GESTIÓN reflejan el proceso real, no lo que se
+capturó al registrar. No modifica datos: `candidatos.citado` sigue con el valor original.
+
+**Impacto medido sobre el Excel reportado (781 filas)**: pasan de NO a SÍ **50 filas**, las que
+tenían CITADO = NO y ESTADO GESTIÓN con un estado del proceso (solo posible con citación): 19 No
+asistió, 18 Aprobado final, 8 Entrevistado, 4 Citado, 1 Rechazado final. De ellas, 46 tienen la
+asistencia marcada (la inconsistencia visible). Las otras 731 no cambian. Ninguna fila con CITADO = SÍ
+cambia, porque la regla nueva solo puede convertir un No en Sí.
+
+**Prueba**: `tests/integracion/reportes.test.js` ya no simula `citado = NULL` en la base; registra al
+candidato con Citado = No (el caso real) y verifica CITADO = SÍ y que ESTADO GESTIÓN no sea el motivo
+del registro. Sin el arreglo, la prueba falla con `"NO"`. Suite de reportes: 16/17 (la falla es la
+preexistente `promedia la evaluación por criterio`).
+
+**Pendiente:** commitear y desplegar (`git pull` + `pm2 restart hidra-backend`; **no reiniciar el
+servidor**, ver §11.10). Si negocio quiere seguir viendo lo que marcó la reclutadora al registrar,
+habría que agregarlo como columna aparte.
