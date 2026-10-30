@@ -11,6 +11,22 @@
 /** Mismo criterio de negocio que `seleccion.service.js`. */
 const esCargoAgente = (candidato) => /agente/i.test(candidato.cargo ?? '');
 
+/** Estado de FirmaCloud (`status`) cuando el candidato ya firmó los dos documentos. */
+const FIRMA_COMPLETA = 'signed';
+/** Marca local: FirmaCloud no respondió y no se sabe si firmó. */
+const FIRMA_SIN_CONSULTA = 'sin_consulta';
+
+/**
+ * Documentos firmados que viajan a Gestor (migración 021). Obligatorios: sin
+ * ellos no se puede enviar. `firma` es el tipo que entiende FirmaCloud.
+ */
+const DOCUMENTOS_FIRMADOS = Object.freeze([
+  Object.freeze({ tipo: 'hoja_vida_firmada', firma: 'cv', nombre: 'Hoja de vida firmada' }),
+  Object.freeze({ tipo: 'tratamiento_datos_firmado', firma: 'tratamiento', nombre: 'Tratamiento de datos firmado' }),
+]);
+
+const MAX_NOTA_ANTECEDENTES = 500;
+
 /**
  * ¿Se puede enviar este candidato a contratación? Devuelve el motivo si no.
  *
@@ -22,8 +38,14 @@ const esCargoAgente = (candidato) => /agente/i.test(candidato.cargo ?? '');
  *     Staff: marcado como contratado (`candidato_contratacion.contratado`), y
  *   - activo en formación (`candidato_formacion.estado`, no de baja), y
  *   - con número de documento (Gestor identifica al empleado por él), y
+ *   - con la hoja de vida y el tratamiento de datos firmados por el candidato
+ *     en FirmaCloud (migración 021; `firma_estado` lo completa
+ *     `contratacion.documentos.js` antes de llamar aquí), y
  *   - que no haya sido enviado antes (un candidato vive en un solo lote; para
  *     reenviar datos o deshacer está "reenviar" sobre el lote original).
+ *
+ * Los antecedentes no bloquean: si falta alguno se pide una nota al enviar
+ * (`motivoFaltaNota`).
  */
 function motivoNoElegible(datos) {
   if (datos.estado !== 'aprobado_final') {
@@ -41,7 +63,75 @@ function motivoNoElegible(datos) {
   if (datos.estado_formacion !== 'activo') return 'Falta marcarlo como activo';
   if (!datos.numero_documento) return 'No tiene número de documento';
   if (datos.contratacion_lote_id) return 'Ya fue enviado a contratación en otro lote';
+  if (!datos.firma_referencia) {
+    return 'No tiene la hoja de vida y el tratamiento de datos enviados a firma';
+  }
+  if (datos.firma_estado === FIRMA_SIN_CONSULTA) {
+    return 'No se pudo confirmar la firma en FirmaCloud; intenta de nuevo en unos minutos';
+  }
+  if (datos.firma_estado !== FIRMA_COMPLETA) {
+    return 'No ha firmado la hoja de vida y el tratamiento de datos';
+  }
   return null;
+}
+
+/**
+ * ¿Hay que preguntarle a FirmaCloud si ya firmó? Solo si es lo único que falta
+ * para ser elegible: así no se consulta a quien igual no se puede enviar. Un
+ * "signed" se guarda en `candidato_firmas` y no se vuelve a consultar.
+ */
+function debeConsultarFirma(datos) {
+  if (!datos.firma_referencia || datos.firma_estado === FIRMA_COMPLETA) return false;
+  return motivoNoElegible({ ...datos, firma_estado: FIRMA_COMPLETA }) === null;
+}
+
+/**
+ * Antecedentes sin soporte cargado. `antecedentes` es una fila por tipo activo
+ * de `tipos_antecedente`, con `documento_id` nulo si no tiene soporte.
+ */
+function antecedentesFaltantes(antecedentes) {
+  return antecedentes.filter((a) => !a.documento_id).map((a) => a.nombre);
+}
+
+/** Si falta algún antecedente, la nota para RRHH es obligatoria; si no, no se pide. */
+function motivoFaltaNota(faltantes, nota) {
+  if (faltantes.length === 0) return null;
+  if (typeof nota === 'string' && nota.trim() !== '') return null;
+  return `Le faltan antecedentes (${faltantes.join(', ')}): escribe una nota para RRHH`;
+}
+
+/** Nota que se guarda y viaja: solo cuando faltan antecedentes. */
+function notaParaEnviar(faltantes, nota) {
+  if (faltantes.length === 0 || typeof nota !== 'string') return null;
+  const limpia = nota.trim();
+  return limpia === '' ? null : limpia.slice(0, MAX_NOTA_ANTECEDENTES);
+}
+
+/**
+ * Envíos de documentos de un candidato, en el orden en que los verá RRHH:
+ * primero los firmados, después los antecedentes con soporte. Lo que se guarda
+ * en el outbox es solo la referencia; el archivo se lee al despachar.
+ *
+ * Los firmados van sin `documento_id`: el despachador usa la copia ya guardada
+ * o la descarga de FirmaCloud la primera vez (migración 021).
+ */
+function documentosAEnviar(antecedentes) {
+  const firmados = DOCUMENTOS_FIRMADOS.map((d) => ({
+    tipo: d.tipo,
+    nombre: d.nombre,
+    origen: 'firma',
+    firma: d.firma,
+    documento_id: null,
+  }));
+  const soportes = antecedentes
+    .filter((a) => a.documento_id)
+    .map((a) => ({
+      tipo: `antecedente_${a.codigo}`,
+      nombre: a.nombre,
+      origen: 'antecedente',
+      documento_id: a.documento_id,
+    }));
+  return [...firmados, ...soportes];
 }
 
 const vacioANull = (valor) => (valor === undefined || valor === '' ? null : valor);
@@ -61,8 +151,11 @@ function instanteIso(valor) {
  * Un candidato con la forma que espera Gestor en `POST /lotes` y
  * `PUT /candidatos/:id`. Los catálogos viajan por CÓDIGO: los IDs de Hydra no
  * significan nada en Gestor.
+ *
+ * `documentos` avisa qué antecedentes faltan y la nota de Contratación; los
+ * archivos llegan después, cada uno en su propio envío.
  */
-function construirCandidatoPayload(datos, version) {
+function construirCandidatoPayload(datos, version, { faltantes = [], nota = null } = {}) {
   return {
     hydra_candidato_id: datos.id,
     version,
@@ -96,6 +189,11 @@ function construirCandidatoPayload(datos, version) {
     consentimiento: {
       fecha: vacioANull(datos.fecha_consentimiento),
       ciudad: vacioANull(datos.ciudad_consentimiento),
+    },
+    documentos: {
+      firmados: DOCUMENTOS_FIRMADOS.map((d) => d.tipo),
+      antecedentes_faltantes: faltantes,
+      nota_antecedentes: notaParaEnviar(faltantes, nota),
     },
   };
 }
@@ -171,8 +269,17 @@ function estadoLocalPorResultado(resultado, estadoActual) {
 }
 
 module.exports = {
+  FIRMA_COMPLETA,
+  FIRMA_SIN_CONSULTA,
+  DOCUMENTOS_FIRMADOS,
+  MAX_NOTA_ANTECEDENTES,
   esCargoAgente,
   motivoNoElegible,
+  debeConsultarFirma,
+  antecedentesFaltantes,
+  motivoFaltaNota,
+  notaParaEnviar,
+  documentosAEnviar,
   construirCandidatoPayload,
   generarLoteExternoId,
   decidirResultadoEnvio,

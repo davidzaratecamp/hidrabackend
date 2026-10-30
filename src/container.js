@@ -50,6 +50,7 @@ const { crearFormularioServicio } = require('./modules/formulario/formulario.ser
 const { crearSeleccionServicio } = require('./modules/seleccion/seleccion.service');
 const { crearAntecedentesServicio } = require('./modules/antecedentes/antecedentes.service');
 const { crearContratacionServicio } = require('./modules/contratacion/contratacion.service');
+const { crearDocumentosContratacion } = require('./modules/contratacion/contratacion.documentos');
 const { crearFormacionServicio } = require('./modules/formacion/formacion.service');
 
 // Integraciones
@@ -212,12 +213,13 @@ function construirContenedor(sobrescrituras = {}) {
   const antecedentesServicio = crearAntecedentesServicio({
     antecedentesRepo, candidatoServicio, config, logger,
   });
+  const documentosContratacion = crearDocumentosContratacion({ contratacionRepo, firma, config, logger });
   const contratacionServicio = crearContratacionServicio({
-    contratacionRepo, estadoServicio, gestor, uow, config, logger,
+    contratacionRepo, documentosContratacion, estadoServicio, gestor, uow, config, logger,
     // En pruebas el despacho se dispara a mano, para no competir con las aserciones.
     despachoInmediato: sobrescrituras.despachoInmediato ?? !config.esPrueba,
   });
-  const formacionServicio = crearFormacionServicio({ formacionRepo, uow });
+  const formacionServicio = crearFormacionServicio({ formacionRepo, documentosContratacion, uow });
   const autenticarGestor = crearAutenticarGestor({ config: config.gestor, logger });
 
   // --- Controladores ---------------------------------------------------------

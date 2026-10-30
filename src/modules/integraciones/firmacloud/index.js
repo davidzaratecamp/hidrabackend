@@ -137,10 +137,22 @@ function crearFirmaCloudMemoria({ logger } = {}) {
       return { referencia, estado: 'enviado', firmarUrl };
     },
 
+    // `status` imita al de FirmaCloud real (pending | viewed | signed).
     async consultarEstado(referencia) {
       const envio = envios.find((e) => e.referencia === referencia);
       if (!envio) throw HttpError.noEncontrado('Firma no encontrada');
-      return { referencia, estado: 'pendiente_de_firma' };
+      return {
+        referencia,
+        estado: envio.firmado ? 'firmado' : 'pendiente_de_firma',
+        status: envio.firmado ? 'signed' : 'pending',
+      };
+    },
+
+    /** Solo pruebas: el candidato firmó los dos documentos. */
+    marcarFirmado(referencia) {
+      const envio = envios.find((e) => e.referencia === referencia);
+      if (!envio) throw new Error(`Firma de memoria desconocida: ${referencia}`);
+      envio.firmado = true;
     },
 
     async descargar(referencia, tipo) {

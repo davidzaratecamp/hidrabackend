@@ -11,6 +11,11 @@
  * Fase 6 (Gestor → Hydra): Gestor avisa cuando RRHH registró a un candidato como
  * empleado (→ estado "contratado") o lo descartó (→ nota en el expediente).
  *
+ * Documentos (migración 021): después del lote van, cada uno en su envío, la
+ * hoja de vida y el tratamiento de datos firmados (obligatorios) y los soportes
+ * de antecedentes que tenga cargados. Si falta algún antecedente, Contratación
+ * deja una nota para RRHH.
+ *
  * Contrato completo: `conexionhydra.md` §5 en el repo de Gestor.
  */
 
@@ -19,6 +24,10 @@ const { HttpError } = require('../../shared/errors/HttpError');
 const { nombreCompleto } = require('../../shared/utils/nombreCompleto');
 const {
   motivoNoElegible,
+  antecedentesFaltantes,
+  motivoFaltaNota,
+  notaParaEnviar,
+  documentosAEnviar,
   construirCandidatoPayload,
   generarLoteExternoId,
   decidirResultadoEnvio,
@@ -28,13 +37,15 @@ const {
 // Estados locales en los que el candidato ya no admite reenviar ni cancelar.
 const ESTADOS_CERRADOS = ['registrado'];
 
-function crearContratacionServicio({ contratacionRepo, estadoServicio, gestor, uow, config, logger, despachoInmediato = true }) {
+function crearContratacionServicio({
+  contratacionRepo, documentosContratacion, estadoServicio, gestor, uow, config, logger, despachoInmediato = true,
+}) {
   const politica = config.gestor.despacho;
 
   // --------------------------------------------------------------- consultas --
 
   async function listarElegibles() {
-    const filas = await contratacionRepo.candidatosAprobadosNoEnviados();
+    const filas = await documentosContratacion.completar(await contratacionRepo.candidatosAprobadosNoEnviados());
     return filas.map((f) => ({
       id: f.id,
       nombre: nombreCompleto(f),
@@ -44,6 +55,7 @@ function crearContratacionServicio({ contratacionRepo, estadoServicio, gestor, u
       fechaDecision: f.fecha_decision,
       elegible: motivoNoElegible(f) === null,
       motivoNoElegible: motivoNoElegible(f),
+      antecedentesFaltantes: antecedentesFaltantes(f.antecedentes),
     }));
   }
 
@@ -72,8 +84,31 @@ function crearContratacionServicio({ contratacionRepo, estadoServicio, gestor, u
     });
   }
 
-  async function enviarLote({ nombre, fechaIngresoSugerida, candidatoIds }, usuario) {
+  /** Un envío `documento` por archivo, encolado después del lote o de la actualización. */
+  async function encolarDocumentos(repo, { loteId, candidatoId, antecedentes, enviadoPorId }) {
+    for (const documento of documentosAEnviar(antecedentes)) {
+      await repo.encolarEnvio({
+        tipo: 'documento',
+        loteId,
+        candidatoId,
+        metodo: 'PUT',
+        ruta: `/candidatos/${candidatoId}/documentos/${documento.tipo}`,
+        payload: documento,
+        idempotencyKey: randomUUID(),
+        enviadoPorId,
+      });
+    }
+  }
+
+  async function enviarLote({ nombre, fechaIngresoSugerida, candidatoIds, notasAntecedentes = {} }, usuario) {
     const ids = [...new Set(candidatoIds)];
+
+    // Fuera de la transacción: consultar a FirmaCloud puede tardar, y no debe
+    // hacerse con filas bloqueadas. Una firma completa no se deshace, así que el
+    // resultado sigue valiendo dentro de la transacción.
+    const previos = (await Promise.all(ids.map((id) => contratacionRepo.datosParaEnvio(id)))).filter(Boolean);
+    await documentosContratacion.completar(previos);
+    const previoDe = new Map(previos.map((p) => [p.id, p]));
 
     const loteId = await uow.ejecutar(async ({ contratacionRepo: repo }) => {
       const candidatos = [];
@@ -84,9 +119,15 @@ function crearContratacionServicio({ contratacionRepo, estadoServicio, gestor, u
           problemas.push({ candidatoId: id, motivo: 'El candidato no existe' });
           continue;
         }
-        const motivo = motivoNoElegible(datos);
+        const previo = previoDe.get(id);
+        datos.firma_estado = previo?.firma_estado ?? datos.firma_estado;
+        datos.antecedentes = previo?.antecedentes ?? [];
+        const faltantes = antecedentesFaltantes(datos.antecedentes);
+        const nota = notasAntecedentes[String(id)];
+
+        const motivo = motivoNoElegible(datos) ?? motivoFaltaNota(faltantes, nota);
         if (motivo) problemas.push({ candidatoId: id, nombre: nombreCompleto(datos), motivo });
-        else candidatos.push(datos);
+        else candidatos.push({ datos, faltantes, nota: notaParaEnviar(faltantes, nota) });
       }
       if (problemas.length > 0) {
         throw HttpError.conflicto('Hay candidatos que no se pueden enviar a contratación', {
@@ -100,7 +141,7 @@ function crearContratacionServicio({ contratacionRepo, estadoServicio, gestor, u
       await repo.fijarLoteExternoId(id, loteExternoId);
       // La PK de contratacion_candidatos es el candidato: si otra petición lo
       // envió en paralelo, este INSERT choca y la transacción completa se revierte.
-      await repo.registrarCandidatos(id, candidatos.map((c) => c.id));
+      await repo.registrarCandidatos(id, candidatos.map((c) => ({ id: c.datos.id, nota: c.nota })));
 
       await repo.encolarEnvio({
         tipo: 'lote',
@@ -111,11 +152,16 @@ function crearContratacionServicio({ contratacionRepo, estadoServicio, gestor, u
           lote_externo_id: loteExternoId,
           nombre,
           fecha_ingreso_sugerida: fechaIngresoSugerida ?? null,
-          candidatos: candidatos.map((c) => construirCandidatoPayload(c, 1)),
+          candidatos: candidatos.map((c) => construirCandidatoPayload(c.datos, 1, c)),
         },
         idempotencyKey: randomUUID(),
         enviadoPorId: usuario.id,
       });
+      for (const c of candidatos) {
+        await encolarDocumentos(repo, {
+          loteId: id, candidatoId: c.datos.id, antecedentes: c.datos.antecedentes, enviadoPorId: usuario.id,
+        });
+      }
       return id;
     });
 
@@ -136,14 +182,17 @@ function crearContratacionServicio({ contratacionRepo, estadoServicio, gestor, u
   }
 
   /**
-   * Reenvía los datos actuales del candidato (versión + 1). Gestor actualiza solo
-   * lo que RRHH no haya editado a mano, y si el candidato estaba cancelado lo
-   * vuelve a poner en proceso.
+   * Reenvía los datos actuales del candidato (versión + 1) y sus documentos. Gestor
+   * actualiza solo lo que RRHH no haya editado a mano, y si el candidato estaba
+   * cancelado lo vuelve a poner en proceso. Así llegan también los antecedentes
+   * cargados después del envío; la nota es la que se dejó al enviar.
    */
   async function reenviarCandidato(candidatoId, usuario) {
     await uow.ejecutar(async ({ contratacionRepo: repo }) => {
       const actual = await contratacionAbierta(repo, candidatoId);
       const datos = await repo.datosParaEnvio(candidatoId);
+      const antecedentes = await repo.antecedentesDe([candidatoId]);
+      const faltantes = antecedentesFaltantes(antecedentes);
       const version = actual.version + 1;
 
       await repo.actualizarCandidato(candidatoId, { version, estado: 'en_cola', detalle: null });
@@ -153,10 +202,11 @@ function crearContratacionServicio({ contratacionRepo, estadoServicio, gestor, u
         candidatoId,
         metodo: 'PUT',
         ruta: `/candidatos/${candidatoId}`,
-        payload: construirCandidatoPayload(datos, version),
+        payload: construirCandidatoPayload(datos, version, { faltantes, nota: actual.nota_antecedentes }),
         idempotencyKey: randomUUID(),
         enviadoPorId: usuario.id,
       });
+      await encolarDocumentos(repo, { loteId: actual.lote_id, candidatoId, antecedentes, enviadoPorId: usuario.id });
     });
     programarDespacho();
     return contratacionRepo.contratacionDe(candidatoId);
@@ -201,6 +251,10 @@ function crearContratacionServicio({ contratacionRepo, estadoServicio, gestor, u
 
   /** Refleja en los candidatos lo que respondió Gestor. */
   async function aplicarRespuesta(repo, envio, respuesta, decision) {
+    // Un documento no cambia el estado del candidato: su avance y sus fallos se
+    // ven en los envíos del lote, con "Reintentar".
+    if (envio.tipo === 'documento') return;
+
     if (decision.estado === 'enviado') {
       if (envio.tipo === 'cancelacion') return; // ya se marcó 'cancelado' al encolar
       // `POST /lotes` responde `candidatos[]`; `PUT /candidatos/:id`, `candidato`.
@@ -224,6 +278,32 @@ function crearContratacionServicio({ contratacionRepo, estadoServicio, gestor, u
     }
   }
 
+  /**
+   * Los envíos `documento` guardan solo la referencia: el archivo se lee aquí.
+   * Si no se pudo conseguir, se responde como lo haría el transporte, para que
+   * la misma política decida: permanente → 422 (fallido); FirmaCloud caído →
+   * sin respuesta (reintento).
+   */
+  async function enviarAGestor(repo, envio) {
+    let payload = envio.payload;
+    if (envio.tipo === 'documento') {
+      const preparado = await documentosContratacion.cuerpoDocumento(repo, envio);
+      if (preparado.error) {
+        return preparado.permanente
+          ? { status: 422, codigo: 'DOCUMENTO_NO_DISPONIBLE', cuerpo: null, error: preparado.error }
+          : { status: null, codigo: null, cuerpo: null, error: preparado.error };
+      }
+      payload = preparado.cuerpo;
+    }
+    return gestor.enviar({
+      metodo: envio.metodo,
+      ruta: envio.ruta,
+      payload,
+      idempotencyKey: envio.idempotency_key,
+      timeoutMs: politica.timeoutMs,
+    });
+  }
+
   async function despacharUno() {
     return uow.ejecutar(async ({ contratacionRepo: repo }) => {
       const envio = await repo.siguienteEnvioParaDespacho();
@@ -231,13 +311,7 @@ function crearContratacionServicio({ contratacionRepo, estadoServicio, gestor, u
 
       // La fila queda bloqueada mientras dura la llamada (con timeout): nadie más
       // la toma, y el resultado se guarda en la misma transacción.
-      const respuesta = await gestor.enviar({
-        metodo: envio.metodo,
-        ruta: envio.ruta,
-        payload: envio.payload,
-        idempotencyKey: envio.idempotency_key,
-        timeoutMs: politica.timeoutMs,
-      });
+      const respuesta = await enviarAGestor(repo, envio);
       const decision = decidirResultadoEnvio(
         { status: respuesta.status, codigo: respuesta.codigo, intentosPrevios: envio.intentos },
         politica

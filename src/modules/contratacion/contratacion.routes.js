@@ -5,6 +5,7 @@ const { z } = require('zod');
 const { validar } = require('../../shared/middleware/validar');
 const { requierePermiso } = require('../../shared/middleware/autorizar');
 const { ok, creado } = require('../../shared/utils/respuesta');
+const { MAX_NOTA_ANTECEDENTES } = require('./contratacion.reglas');
 
 const FECHA = /^\d{4}-\d{2}-\d{2}$/;
 const id = z.object({ id: z.coerce.number().int().positive() });
@@ -14,6 +15,11 @@ const enviarLote = z.object({
   fechaIngresoSugerida: z.string().regex(FECHA, 'Formato AAAA-MM-DD').optional(),
   // Mismo tope que acepta Gestor por lote.
   candidatoIds: z.array(z.coerce.number().int().positive()).min(1).max(200),
+  // { [candidatoId]: nota } para los que tienen antecedentes sin cargar
+  // (migración 021). Si falta y le faltan antecedentes, el servicio responde 409.
+  notasAntecedentes: z
+    .record(z.string().regex(/^\d+$/), z.string().trim().max(MAX_NOTA_ANTECEDENTES))
+    .optional(),
 });
 
 const cancelar = z.object({

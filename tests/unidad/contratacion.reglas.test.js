@@ -6,6 +6,11 @@
 
 const {
   motivoNoElegible,
+  debeConsultarFirma,
+  antecedentesFaltantes,
+  motivoFaltaNota,
+  notaParaEnviar,
+  documentosAEnviar,
   construirCandidatoPayload,
   generarLoteExternoId,
   decidirResultadoEnvio,
@@ -23,6 +28,9 @@ const base = {
   estado_formacion: 'activo',
   numero_documento: '1012345678',
   contratacion_lote_id: null,
+  firma_id: 7,
+  firma_referencia: 'fc-123',
+  firma_estado: 'signed',
 };
 
 describe('motivoNoElegible', () => {
@@ -65,6 +73,69 @@ describe('motivoNoElegible', () => {
     expect(motivoNoElegible({ ...base, numero_documento: null })).toMatch(/documento/);
     expect(motivoNoElegible({ ...base, contratacion_lote_id: 3 })).toMatch(/otro lote/);
   });
+
+  it('exige la hoja de vida y el tratamiento de datos firmados (migración 021)', () => {
+    expect(motivoNoElegible({ ...base, firma_referencia: null, firma_estado: null })).toMatch(/enviados a firma/);
+    expect(motivoNoElegible({ ...base, firma_estado: 'pending' })).toMatch(/No ha firmado/);
+    expect(motivoNoElegible({ ...base, firma_estado: 'viewed' })).toMatch(/No ha firmado/);
+    expect(motivoNoElegible({ ...base, firma_estado: 'sin_consulta' })).toMatch(/FirmaCloud/);
+  });
+
+  it('el motivo de proceso va antes que el de la firma', () => {
+    expect(motivoNoElegible({ ...base, estado_formacion: 'baja', firma_estado: 'pending' })).toMatch(/baja/);
+  });
+});
+
+describe('debeConsultarFirma', () => {
+  it('consulta solo si la firma es lo único que falta', () => {
+    expect(debeConsultarFirma({ ...base, firma_estado: 'pending' })).toBe(true);
+    expect(debeConsultarFirma({ ...base, firma_estado: null })).toBe(true);
+  });
+
+  it('no consulta si ya está firmado, si no tiene firma o si le falta otra cosa', () => {
+    expect(debeConsultarFirma(base)).toBe(false);
+    expect(debeConsultarFirma({ ...base, firma_referencia: null, firma_estado: null })).toBe(false);
+    expect(debeConsultarFirma({ ...base, firma_estado: 'pending', estado_formacion: 'baja' })).toBe(false);
+  });
+});
+
+describe('antecedentes y nota para RRHH', () => {
+  const antecedentes = [
+    { codigo: 'adres', nombre: 'ADRES', documento_id: 11 },
+    { codigo: 'policia', nombre: 'Antecedentes de Policía', documento_id: null },
+    { codigo: 'comparendos', nombre: 'Comparendos', documento_id: 12 },
+    { codigo: 'procuraduria', nombre: 'Procuraduría', documento_id: null },
+  ];
+  const completos = antecedentes.map((a, i) => ({ ...a, documento_id: 20 + i }));
+
+  it('lista los antecedentes sin soporte, en el orden del catálogo', () => {
+    expect(antecedentesFaltantes(antecedentes)).toEqual(['Antecedentes de Policía', 'Procuraduría']);
+    expect(antecedentesFaltantes(completos)).toEqual([]);
+  });
+
+  it('pide nota solo cuando falta algún antecedente', () => {
+    const faltantes = antecedentesFaltantes(antecedentes);
+    expect(motivoFaltaNota(faltantes, undefined)).toMatch(/Policía, Procuraduría.*nota/);
+    expect(motivoFaltaNota(faltantes, '   ')).toMatch(/nota/);
+    expect(motivoFaltaNota(faltantes, 'Policía en trámite')).toBeNull();
+    expect(motivoFaltaNota([], undefined)).toBeNull();
+  });
+
+  it('la nota solo se guarda si faltan antecedentes, sin espacios y con tope', () => {
+    expect(notaParaEnviar(['ADRES'], '  En trámite  ')).toBe('En trámite');
+    expect(notaParaEnviar([], 'No hace falta')).toBeNull();
+    expect(notaParaEnviar(['ADRES'], '   ')).toBeNull();
+    expect(notaParaEnviar(['ADRES'], 'x'.repeat(600))).toHaveLength(500);
+  });
+
+  it('envía siempre los dos firmados y solo los antecedentes con soporte', () => {
+    expect(documentosAEnviar(antecedentes)).toEqual([
+      { tipo: 'hoja_vida_firmada', nombre: 'Hoja de vida firmada', origen: 'firma', firma: 'cv', documento_id: null },
+      { tipo: 'tratamiento_datos_firmado', nombre: 'Tratamiento de datos firmado', origen: 'firma', firma: 'tratamiento', documento_id: null },
+      { tipo: 'antecedente_adres', nombre: 'ADRES', origen: 'antecedente', documento_id: 11 },
+      { tipo: 'antecedente_comparendos', nombre: 'Comparendos', origen: 'antecedente', documento_id: 12 },
+    ]);
+  });
 });
 
 describe('construirCandidatoPayload', () => {
@@ -99,6 +170,18 @@ describe('construirCandidatoPayload', () => {
   it('convierte la fecha de decisión (hora local) a instante ISO', () => {
     const { proceso } = construirCandidatoPayload(datos, 1);
     expect(proceso.aprobado_final_en).toBe(new Date('2026-09-29T10:04:00').toISOString());
+  });
+
+  it('avisa qué antecedentes faltan y la nota; sin faltantes la nota no viaja', () => {
+    expect(construirCandidatoPayload(datos, 1, { faltantes: ['ADRES'], nota: ' En trámite ' }).documentos).toEqual({
+      firmados: ['hoja_vida_firmada', 'tratamiento_datos_firmado'],
+      antecedentes_faltantes: ['ADRES'],
+      nota_antecedentes: 'En trámite',
+    });
+    expect(construirCandidatoPayload(datos, 1, { faltantes: [], nota: 'sobra' }).documentos).toMatchObject({
+      antecedentes_faltantes: [],
+      nota_antecedentes: null,
+    });
   });
 
   it('no inventa datos: lo que falta viaja como null', () => {

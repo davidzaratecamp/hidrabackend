@@ -15,7 +15,7 @@
 
 const { HttpError } = require('../../shared/errors/HttpError');
 const { nombreCompleto } = require('../../shared/utils/nombreCompleto');
-const { esCargoAgente, motivoNoElegible } = require('../contratacion/contratacion.reglas');
+const { esCargoAgente, motivoNoElegible, antecedentesFaltantes } = require('../contratacion/contratacion.reglas');
 const {
   enFormacion,
   porContratar,
@@ -54,10 +54,18 @@ function aVista(f) {
     },
     elegible: motivo === null,
     motivoNoElegible: motivo,
+    // Al enviar, quien tenga faltantes debe llevar una nota para RRHH (migración 021).
+    antecedentesFaltantes: antecedentesFaltantes(f.antecedentes ?? []),
   };
 }
 
-function crearFormacionServicio({ formacionRepo, uow }) {
+function crearFormacionServicio({ formacionRepo, documentosContratacion, uow }) {
+  /** Firma real (FirmaCloud) y antecedentes de cada fila, para `aVista`. */
+  async function vistas(filas) {
+    await documentosContratacion.completar(filas);
+    return filas.map(aVista);
+  }
+
   async function cargarParaEditar(repo, candidatoId) {
     const datos = await repo.buscar(candidatoId, { paraActualizar: true });
     if (!datos) throw HttpError.noEncontrado('El candidato no existe');
@@ -76,20 +84,20 @@ function crearFormacionServicio({ formacionRepo, uow }) {
 
       await repo.guardarEstado({ candidatoId, estado, razon, usuarioId: usuario.id });
     });
-    return aVista(await formacionRepo.buscar(candidatoId));
+    return (await vistas([await formacionRepo.buscar(candidatoId)]))[0];
   }
 
   return {
     /** Agentes en formación, todavía sin enviar a contratación (rol Formación). */
     async listar() {
       const filas = await formacionRepo.pendientesDeEnviar();
-      return filas.filter(enFormacion).map(aVista);
+      return vistas(filas.filter(enFormacion));
     },
 
     /** Staff y Agentes que pasaron la formación, sin enviar todavía (rol Contratación). */
     async listarPorContratar() {
       const filas = await formacionRepo.pendientesDeEnviar();
-      return filas.filter(porContratar).map(aVista);
+      return vistas(filas.filter(porContratar));
     },
 
     async registrarAsistencia(candidatoId, { asistio, razon }, usuario) {
@@ -104,7 +112,7 @@ function crearFormacionServicio({ formacionRepo, uow }) {
         await repo.guardarAsistencia({ candidatoId, asistio, razon, usuarioId: usuario.id });
         if (debeLimpiarActivo(asistio, datos.estado_formacion)) await repo.limpiarEstado(candidatoId);
       });
-      return aVista(await formacionRepo.buscar(candidatoId));
+      return (await vistas([await formacionRepo.buscar(candidatoId)]))[0];
     },
 
     /** Activo/baja de un Agente en formación (rol Formación). */
