@@ -2,6 +2,15 @@
 
 /** Repositorio de la integración con Gestor: todo el SQL del módulo. */
 
+// Envío a firma vigente del candidato (el último, si se reenvió a firmar). La
+// usan también `formacion.repository.js`, para aplicar `motivoNoElegible` igual.
+const ULTIMA_FIRMA = `(
+  SELECT f2.id FROM candidato_firmas f2
+   WHERE f2.candidato_id = c.id
+   ORDER BY f2.created_at DESC, f2.id DESC
+   LIMIT 1
+)`;
+
 // Todo lo que se envía de un candidato, con los catálogos por CÓDIGO. Las
 // banderas de elegibilidad (citado a formación / contratación / asistencia y
 // activo en formación) vienen de las tablas informativas de las migraciones
@@ -20,7 +29,8 @@ const SELECT_DATOS = `
          df.created_at AS fecha_decision,
          cf.citado AS citado_formacion, ctr.contratado AS contratacion,
          fo.asistio AS asistio_formacion, fo.estado AS estado_formacion,
-         cc.lote_id AS contratacion_lote_id
+         cc.lote_id AS contratacion_lote_id,
+         fi.id AS firma_id, fi.referencia_externa AS firma_referencia, fi.estado AS firma_estado
     FROM candidatos c
     JOIN tipos_documento td   ON td.id = c.tipo_documento_id
     JOIN clientes cl          ON cl.id = c.cliente_id
@@ -40,6 +50,7 @@ const SELECT_DATOS = `
     LEFT JOIN candidato_contratacion ctr    ON ctr.candidato_id = c.id
     LEFT JOIN candidato_formacion fo        ON fo.candidato_id = c.id
     LEFT JOIN contratacion_candidatos cc    ON cc.candidato_id = c.id
+    LEFT JOIN candidato_firmas fi ON fi.id = ${ULTIMA_FIRMA}
 `;
 
 function crearContratacionRepositorio({ db }) {
@@ -74,12 +85,74 @@ function crearContratacionRepositorio({ db }) {
     return filas[0] ?? null;
   }
 
-  async function registrarCandidatos(loteId, candidatoIds) {
-    if (candidatoIds.length === 0) return;
+  /** `candidatos`: `[{ id, nota }]`; `nota` solo cuando faltan antecedentes (migración 021). */
+  async function registrarCandidatos(loteId, candidatos) {
+    if (candidatos.length === 0) return;
     await db.query(
-      'INSERT INTO contratacion_candidatos (candidato_id, lote_id) VALUES ?',
-      [candidatoIds.map((id) => [id, loteId])]
+      'INSERT INTO contratacion_candidatos (candidato_id, lote_id, nota_antecedentes) VALUES ?',
+      [candidatos.map((c) => [c.id, loteId, c.nota ?? null])]
     );
+  }
+
+  // ------------------------------------------------- documentos (021) ------
+  /**
+   * Antecedentes de varios candidatos: una fila por candidato y tipo activo,
+   * con `documento_id` nulo si ese soporte no está cargado.
+   */
+  async function antecedentesDe(candidatoIds) {
+    if (candidatoIds.length === 0) return [];
+    const [filas] = await db.query(
+      `SELECT c.id AS candidato_id, t.codigo, t.nombre, d.id AS documento_id
+         FROM candidatos c
+         CROSS JOIN tipos_antecedente t
+         LEFT JOIN candidato_antecedentes a
+                ON a.candidato_id = c.id AND a.tipo_antecedente_id = t.id
+         LEFT JOIN candidato_documentos d ON d.id = a.documento_id
+        WHERE c.id IN (?) AND t.activo = TRUE
+        ORDER BY c.id, t.orden`,
+      [candidatoIds]
+    );
+    return filas;
+  }
+
+  /** FirmaCloud confirmó la firma: se guarda para no volver a consultarla. */
+  async function marcarFirmaCompleta(firmaId, estado) {
+    await db.query('UPDATE candidato_firmas SET estado = ? WHERE id = ?', [estado, firmaId]);
+  }
+
+  async function buscarDocumento(documentoId) {
+    const [filas] = await db.query(
+      `SELECT d.id, d.candidato_id, d.ruta_archivo, d.nombre_original, d.mime_type, d.tamano_bytes
+         FROM candidato_documentos d WHERE d.id = ?`,
+      [documentoId]
+    );
+    return filas[0] ?? null;
+  }
+
+  /** Copia más reciente de un documento firmado ya descargado de FirmaCloud. */
+  async function documentoDeTipo(candidatoId, tipoCodigo) {
+    const [filas] = await db.query(
+      `SELECT d.id, d.candidato_id, d.ruta_archivo, d.nombre_original, d.mime_type, d.tamano_bytes
+         FROM candidato_documentos d
+         JOIN tipos_documento_adjunto t ON t.id = d.tipo_id
+        WHERE d.candidato_id = ? AND t.codigo = ?
+        ORDER BY d.created_at DESC, d.id DESC
+        LIMIT 1`,
+      [candidatoId, tipoCodigo]
+    );
+    return filas[0] ?? null;
+  }
+
+  async function registrarDocumento({ candidatoId, tipoCodigo, rutaArchivo, nombreOriginal, mimeType, tamanoBytes }) {
+    const [res] = await db.query(
+      `INSERT INTO candidato_documentos
+         (candidato_id, tipo_id, ruta_archivo, nombre_original, mime_type, tamano_bytes)
+       SELECT ?, t.id, ?, ?, ?, ?
+         FROM tipos_documento_adjunto t
+        WHERE t.codigo = ?`,
+      [candidatoId, rutaArchivo, nombreOriginal, mimeType, tamanoBytes, tipoCodigo]
+    );
+    return res.insertId || null;
   }
 
   async function actualizarCandidato(candidatoId, { estado, detalle, version, usersCompanyId }) {
@@ -162,7 +235,8 @@ function crearContratacionRepositorio({ db }) {
 
   async function candidatosDeLote(loteId) {
     const [filas] = await db.query(
-      `SELECT cc.candidato_id, cc.version, cc.estado, cc.detalle, cc.users_company_id, cc.updated_at,
+      `SELECT cc.candidato_id, cc.version, cc.estado, cc.detalle, cc.nota_antecedentes,
+              cc.users_company_id, cc.updated_at,
               c.primer_nombre, c.segundo_nombre, c.primer_apellido, c.segundo_apellido,
               c.numero_documento, ca.codigo AS cargo, ec.codigo AS estado_hydra
          FROM contratacion_candidatos cc
@@ -190,16 +264,30 @@ function crearContratacionRepositorio({ db }) {
   /**
    * Siguiente envío vencido, bloqueado. SKIP LOCKED: dos procesos (o dos
    * corridas solapadas) nunca toman la misma fila. Requiere MySQL 8+.
+   *
+   * Un documento espera a que Gestor haya recibido el lote: antes, Gestor no
+   * conoce al candidato y respondería 404.
    */
   async function siguienteEnvioParaDespacho() {
     const [filas] = await db.query(
-      `SELECT * FROM contratacion_envios
-        WHERE estado = 'pendiente' AND proximo_intento <= NOW()
-        ORDER BY proximo_intento, id
+      `SELECT e.* FROM contratacion_envios e
+        WHERE e.estado = 'pendiente' AND e.proximo_intento <= NOW()
+          AND NOT (
+            e.tipo = 'documento' AND EXISTS (
+              SELECT 1 FROM contratacion_envios l
+               WHERE l.lote_id = e.lote_id AND l.tipo = 'lote' AND l.estado <> 'enviado'
+            )
+          )
+        ORDER BY e.proximo_intento, e.id
         LIMIT 1
         FOR UPDATE SKIP LOCKED`
     );
     return filas[0] ?? null;
+  }
+
+  /** El documento firmado se guardó al despacharlo: el reintento usa esa misma copia. */
+  async function actualizarPayloadEnvio(id, payload) {
+    await db.query('UPDATE contratacion_envios SET payload = ? WHERE id = ?', [JSON.stringify(payload), id]);
   }
 
   async function registrarResultadoEnvio(id, { estado, intentos, esperaMinutos, error }) {
@@ -245,6 +333,12 @@ function crearContratacionRepositorio({ db }) {
     candidatosAprobadosNoEnviados,
     contratacionDe,
     registrarCandidatos,
+    antecedentesDe,
+    marcarFirmaCompleta,
+    buscarDocumento,
+    documentoDeTipo,
+    registrarDocumento,
+    actualizarPayloadEnvio,
     actualizarCandidato,
     actualizarCandidatosDeLote,
     crearLote,
@@ -261,4 +355,4 @@ function crearContratacionRepositorio({ db }) {
   };
 }
 
-module.exports = { crearContratacionRepositorio };
+module.exports = { crearContratacionRepositorio, ULTIMA_FIRMA };

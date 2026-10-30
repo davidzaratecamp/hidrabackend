@@ -90,6 +90,18 @@ reintenta.
 - **Elegible**: `aprobado_final` + (Agente: citado a formación y asistió · Staff: contratación
   registrada) + **activo en formación** + número de documento + nunca enviado antes. Un candidato vive en un solo lote; para corregir o
   deshacer se usa "reenviar" o "cancelar".
+- **Documentos (migración 021, `conexionhydra.md` §15 en Gestor)**: además, para ser elegible el
+  candidato tiene que haber **firmado la hoja de vida y el tratamiento de datos** en FirmaCloud
+  (solo su firma; se consulta al listar y `signed` queda en `candidato_firmas.estado`). Si le
+  falta algún antecedente, el envío exige `notasAntecedentes[id]` (nota para RRHH, máx. 500).
+  Cada documento (los 2 firmados + cada antecedente cargado) es un envío `documento` del outbox
+  (`PUT /candidatos/:id/documentos/:tipo`, JSON con base64 y sha256) que sale después del envío
+  del lote. Los firmados se copian a `candidato_documentos` (`uploads/firmados/`) la primera vez,
+  para que los reintentos manden los mismos bytes. Lógica en `contratacion.documentos.js`.
+- **Despliegue de la 021**: va **después** de la 087 de Gestor. En local se aplicó a mano y se
+  registró su checksum en `migraciones_aplicadas`, porque `npm run migrate` se niega a correr: las
+  001-019 figuran como MODIFICADA (diferencia de checksum previa a este cambio, probablemente
+  fines de línea CRLF). Revisarlo antes de correr el runner en otro ambiente.
 - **El estado `contratado` solo lo pone el aviso de Gestor.**
 - **Un 409 de Gestor no es éxito** (a diferencia de la dirección inversa): `LOTE_CERRADO` deja el
   envío `fallido` y visible.

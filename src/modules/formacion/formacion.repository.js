@@ -2,9 +2,12 @@
 
 /** Repositorio del rol Formación: todo el SQL del módulo. */
 
+const { ULTIMA_FIRMA } = require('../contratacion/contratacion.repository');
+
 // Los alias de elegibilidad (estado, cargo, citado_formacion, contratacion,
-// asistio_formacion, estado_formacion, contratacion_lote_id) son los mismos que
-// usa `contratacion.repository.js`, para aplicar `motivoNoElegible` tal cual.
+// asistio_formacion, estado_formacion, contratacion_lote_id, firma_*) son los
+// mismos que usa `contratacion.repository.js`, para aplicar `motivoNoElegible`
+// tal cual.
 const SELECT_FORMACION = `
   SELECT c.id, c.primer_nombre, c.segundo_nombre, c.primer_apellido, c.segundo_apellido,
          c.numero_documento,
@@ -16,7 +19,8 @@ const SELECT_FORMACION = `
          ua.nombre_completo AS asistencia_usuario,
          fo.estado AS estado_formacion, fo.razon_baja, fo.estado_en,
          ue.nombre_completo AS estado_usuario,
-         cc.lote_id AS contratacion_lote_id
+         cc.lote_id AS contratacion_lote_id,
+         fi.id AS firma_id, fi.referencia_externa AS firma_referencia, fi.estado AS firma_estado
     FROM candidatos c
     JOIN clientes cl          ON cl.id = c.cliente_id
     JOIN cargos ca            ON ca.id = c.cargo_id
@@ -28,6 +32,7 @@ const SELECT_FORMACION = `
     LEFT JOIN usuarios ua                     ON ua.id = fo.asistencia_usuario_id
     LEFT JOIN usuarios ue                     ON ue.id = fo.estado_usuario_id
     LEFT JOIN contratacion_candidatos cc      ON cc.candidato_id = c.id
+    LEFT JOIN candidato_firmas fi             ON fi.id = ${ULTIMA_FIRMA}
 `;
 
 function crearFormacionRepositorio({ db }) {
