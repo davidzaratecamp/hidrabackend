@@ -530,6 +530,179 @@ describe('Contratación en Gestor — Fase 5 (envío) y Fase 6 (avisos)', () => 
   });
 });
 
+describe('Exámenes médicos de SST en Gestor (migración 022)', () => {
+  let asiste;  // asiste y no aprueba
+  let falta;   // no asiste; selección decide
+  let lote;
+  const seleccion = () => ({ Authorization: `Bearer ${tokenSeleccion}` });
+  const examenDe = async (id) => {
+    const [[fila]] = await pool.query('SELECT estado, detalle, examen_estado FROM contratacion_candidatos WHERE candidato_id = ?', [id]);
+    return fila;
+  };
+  const trazaDe = async (id) => {
+    const [filas] = await pool.query('SELECT evento, nota, origen, marcado_por FROM contratacion_examenes WHERE candidato_id = ? ORDER BY id', [id]);
+    return filas;
+  };
+  const estadoHydra = async (id) => (await request(app).get(`/api/candidatos/${id}`).set(auth())).body.datos.estado;
+
+  it('prepara dos candidatos enviados a contratación', async () => {
+    asiste = await crearCandidato('Examen Asiste Prueba');
+    falta = await crearCandidato('Examen Falta Prueba');
+    for (const id of [asiste, falta]) {
+      await aprobarFinal(id);
+      await citarFormacion(id);
+      await marcarFormacion(id);
+      await firmarDocumentos(id);
+    }
+    const res = await request(app)
+      .post('/api/contratacion/lotes')
+      .set(auth())
+      .send({
+        nombre: 'Exámenes prueba',
+        candidatoIds: [asiste, falta],
+        notasAntecedentes: { [asiste]: 'En trámite', [falta]: 'En trámite' },
+      });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    lote = res.body.datos;
+    lotesCreados.push(lote.id);
+    respuestaGestor = () => ({ status: 200, codigo: null, cuerpo: { success: true }, error: null });
+    await contenedor.servicios.contratacionServicio.despacharPendientes();
+  }, 60_000);
+
+  it('una marca de SST queda en la traza y en el examen; el reintento con la misma clave no la duplica', async () => {
+    const cuerpo = {
+      hydra_candidato_id: falta,
+      evento: 'no_asistio',
+      descripcion: 'No asistió a los exámenes médicos',
+      nota: 'Incapacidad médica',
+      marcado_por: 'SST Prueba',
+      marcado_en: new Date().toISOString(),
+    };
+    const texto = JSON.stringify(cuerpo);
+    const clave = randomUUID();
+    const enviar = () => {
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      return request(app)
+        .post('/api/integraciones/gestor/v1/examenes')
+        .set({
+          'Content-Type': 'application/json',
+          'X-Api-Key': process.env.GESTOR_CALLBACK_API_KEY,
+          'X-Timestamp': timestamp,
+          'X-Signature': firmar(process.env.GESTOR_CALLBACK_HMAC_SECRET, timestamp, texto),
+          'Idempotency-Key': clave,
+        })
+        .send(texto);
+    };
+    expect((await enviar()).status).toBe(200);
+    expect((await enviar()).status).toBe(200);
+    expect(await trazaDe(falta)).toEqual([
+      { evento: 'no_asistio', nota: 'Incapacidad médica', origen: 'gestor', marcado_por: 'SST Prueba' },
+    ]);
+    expect((await examenDe(falta)).examen_estado).toBe('no_asistio');
+    // No asistir no cambia el estado en Hydra: lo decide selección.
+    expect(await estadoHydra(falta)).toBe('aprobado_final');
+  });
+
+  it('evento inválido desde Gestor → 400', async () => {
+    expect((await desdeGestor('/examenes', { hydra_candidato_id: falta, evento: 'aprobo' })).status).toBe(400);
+  });
+
+  it('selección (sin enviar_contratacion) ve los exámenes: primero el que espera decisión', async () => {
+    const res = await request(app).get('/api/contratacion/examenes').set(seleccion());
+    expect(res.status).toBe(200);
+    expect(res.body.datos[0]).toMatchObject({ candidato_id: falta, examen_estado: 'no_asistio', decisionPendiente: true });
+    expect(res.body.datos[0].examenes).toHaveLength(1);
+    // Sigue sin poder entrar a la pantalla de Contratación.
+    expect((await request(app).get('/api/contratacion/lotes').set(seleccion())).status).toBe(403);
+  });
+
+  it('sin el permiso decidir_continuidad_examenes → 403', async () => {
+    const res = await request(app).get('/api/contratacion/examenes').set({ Authorization: `Bearer ${tokenReclutamiento}` });
+    expect(res.status).toBe(403);
+  });
+
+  it('dar continuidad: queda en la traza, el examen pasa a reagendado y se avisa a Gestor', async () => {
+    const res = await request(app)
+      .post(`/api/contratacion/examenes/candidatos/${falta}/continuidad`)
+      .set(seleccion())
+      .send({ continuar: true, nota: 'Se reagenda para el lunes' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.datos).toMatchObject({ examen_estado: 'reagendado', decisionPendiente: false });
+    expect((await trazaDe(falta)).at(-1)).toMatchObject({ evento: 'continuidad', origen: 'hydra', nota: 'Se reagenda para el lunes' });
+
+    await contenedor.servicios.contratacionServicio.despacharPendientes();
+    expect(gestor.enviados.at(-1)).toMatchObject({
+      metodo: 'POST',
+      ruta: `/candidatos/${falta}/examenes/continuidad`,
+      payload: { continuar: true, nota: 'Se reagenda para el lunes' },
+    });
+  });
+
+  it('sin un "no asistió" pendiente no se puede decidir → 409', async () => {
+    const res = await request(app)
+      .post(`/api/contratacion/examenes/candidatos/${falta}/continuidad`)
+      .set(seleccion())
+      .send({ continuar: false });
+    expect(res.status).toBe(409);
+    expect(res.body.error.codigo).toBe('SIN_DECISION_PENDIENTE');
+  });
+
+  it('vuelve a faltar y selección no continúa: sale del proceso aquí y en Gestor, con la traza completa', async () => {
+    expect((await desdeGestor('/examenes', { hydra_candidato_id: falta, evento: 'no_asistio' })).status).toBe(200);
+    const res = await request(app)
+      .post(`/api/contratacion/examenes/candidatos/${falta}/continuidad`)
+      .set(seleccion())
+      .send({ continuar: false });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+
+    expect(await examenDe(falta)).toMatchObject({ estado: 'cancelado', examen_estado: 'no_asistio' });
+    expect(await estadoHydra(falta)).toBe('no_continua_examenes');
+    expect((await trazaDe(falta)).map((t) => t.evento)).toEqual(['no_asistio', 'continuidad', 'no_asistio', 'no_continuidad']);
+
+    await contenedor.servicios.contratacionServicio.despacharPendientes();
+    expect(gestor.enviados.at(-1)).toMatchObject({
+      ruta: `/candidatos/${falta}/examenes/continuidad`,
+      payload: { continuar: false, nota: null },
+    });
+  });
+
+  it('no aprobó: el candidato pasa a no_apto_examenes con la nota de SST en el historial', async () => {
+    expect((await desdeGestor('/examenes', { hydra_candidato_id: asiste, evento: 'asistio' })).status).toBe(200);
+    const res = await desdeGestor('/examenes', {
+      hydra_candidato_id: asiste, evento: 'no_aprobado', nota: 'Hipertensión no controlada', marcado_por: 'SST Prueba',
+    });
+    expect(res.status).toBe(200);
+    expect(await examenDe(asiste)).toMatchObject({ estado: 'descartado', examen_estado: 'no_aprobado' });
+    expect(await estadoHydra(asiste)).toBe('no_apto_examenes');
+    const historial = await pool.query(
+      `SELECT h.motivo FROM candidato_estado_historial h JOIN estados_candidato e ON e.id = h.estado_nuevo_id
+        WHERE h.candidato_id = ? AND e.codigo = 'no_apto_examenes'`,
+      [asiste]
+    );
+    expect(historial[0][0].motivo).toMatch(/Hipertensión no controlada/);
+  });
+
+  it('el detalle del lote trae la traza de exámenes de cada candidato', async () => {
+    const res = await request(app).get(`/api/contratacion/lotes/${lote.id}`).set(auth());
+    const porId = Object.fromEntries(res.body.datos.candidatos.map((c) => [c.candidato_id, c]));
+    expect(porId[asiste].examenes.map((e) => e.evento)).toEqual(['asistio', 'no_aprobado']);
+    expect(porId[falta].examenes).toHaveLength(4);
+  });
+
+  it('cerrado por exámenes (no apto o sin continuidad) ya no se reenvía ni se cancela → 409', async () => {
+    for (const id of [asiste, falta]) {
+      const reenvio = await request(app).post(`/api/contratacion/candidatos/${id}/reenviar`).set(auth());
+      expect(reenvio.status).toBe(409);
+      expect(reenvio.body.error.codigo).toBe('CERRADO_POR_EXAMENES');
+      const cancelacion = await request(app)
+        .post(`/api/contratacion/candidatos/${id}/cancelar`)
+        .set(auth())
+        .send({ motivo: 'Desistió del proceso' });
+      expect(cancelacion.status).toBe(409);
+    }
+  });
+});
+
 describe('Roles Formación y Contratación (migraciones 019 y 020)', () => {
   let agente;  // Agente aprobado y citado a formación
   let staff;   // Staff aprobado y marcado como contratación

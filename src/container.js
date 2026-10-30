@@ -83,6 +83,7 @@ const { crearHistoricoRutas } = require('./modules/historico/historico.routes');
 const { crearDesprendiblesRutas } = require('./modules/desprendibles/desprendibles.routes');
 const {
   crearContratacionRutas,
+  crearExamenesContratacionRutas,
   crearIntegracionGestorRutas,
 } = require('./modules/contratacion/contratacion.routes');
 const { crearFormacionRutas } = require('./modules/formacion/formacion.routes');
@@ -245,6 +246,8 @@ function construirContenedor(sobrescrituras = {}) {
     '/api/historico': crearHistoricoRutas({ historicoRepo, firma, autenticar }),
     '/api/desprendibles': crearDesprendiblesRutas({ nomina, autenticar }),
     '/api/formacion': crearFormacionRutas({ formacionServicio, autenticar }),
+    // Antes que '/api/contratacion': selección entra aquí sin `enviar_contratacion` (022).
+    '/api/contratacion/examenes': crearExamenesContratacionRutas({ contratacionServicio, autenticar }),
     '/api/contratacion': crearContratacionRutas({ contratacionServicio, autenticar }),
     // Máquina a máquina: Gestor avisa contratados/descartados. Firma HMAC, sin JWT.
     '/api/integraciones/gestor/v1': crearIntegracionGestorRutas({ contratacionServicio, autenticarGestor }),
