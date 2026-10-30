@@ -16,7 +16,11 @@
  * de antecedentes que tenga cargados. Si falta algún antecedente, Contratación
  * deja una nota para RRHH.
  *
- * Contrato completo: `conexionhydra.md` §5 en el repo de Gestor.
+ * Exámenes médicos (migración 022): SST, en Gestor, marca asistencia y
+ * resultado; cada marca llega aquí. Si no asistió, selección decide si da
+ * continuidad; si no aprobó, el candidato pasa a `no_apto_examenes`.
+ *
+ * Contrato completo: `conexionhydra.md` §5 y §16 en el repo de Gestor.
  */
 
 const { randomUUID } = require('node:crypto');
@@ -32,6 +36,10 @@ const {
   generarLoteExternoId,
   decidirResultadoEnvio,
   estadoLocalPorResultado,
+  EXAMEN_POR_EVENTO_SST,
+  motivoNoDecideContinuidad,
+  efectoDecisionContinuidad,
+  ESTADOS_CIERRE_EXAMENES,
 } = require('./contratacion.reglas');
 
 // Estados locales en los que el candidato ya no admite reenviar ni cancelar.
@@ -66,11 +74,91 @@ function crearContratacionServicio({
       contratacionRepo.candidatosDeLote(loteId),
       contratacionRepo.enviosDeLote(loteId),
     ]);
+    const examenes = await contratacionRepo.examenesDe(candidatos.map((c) => c.candidato_id));
     return {
       ...lote,
-      candidatos: candidatos.map((c) => ({ ...c, nombre: nombreCompleto(c) })),
+      candidatos: candidatos.map((c) => ({
+        ...c,
+        nombre: nombreCompleto(c),
+        examenes: examenes.filter((e) => e.candidato_id === c.candidato_id),
+      })),
       envios,
     };
+  }
+
+  /** Pantalla de exámenes médicos de selección: quién espera decisión y la traza de cada uno. */
+  async function listarExamenes() {
+    const candidatos = await contratacionRepo.candidatosConExamen();
+    const examenes = await contratacionRepo.examenesDe(candidatos.map((c) => c.candidato_id));
+    return candidatos.map((c) => ({
+      ...c,
+      nombre: nombreCompleto(c),
+      decisionPendiente: motivoNoDecideContinuidad({ examenEstado: c.examen_estado, estadoLocal: c.estado }) === null,
+      examenes: examenes.filter((e) => e.candidato_id === c.candidato_id),
+    }));
+  }
+
+  /**
+   * Selección decide sobre un candidato que no asistió a los exámenes. Queda en
+   * la traza y se avisa a Gestor por el outbox. No continuar lo saca del
+   * proceso aquí (`no_continua_examenes`) y en Gestor.
+   */
+  async function decidirContinuidad(candidatoId, { continuar, nota }, usuario) {
+    await uow.ejecutar(async ({ contratacionRepo: repo, candidatoRepo }) => {
+      const actual = await repo.contratacionDe(candidatoId, { paraActualizar: true });
+      if (!actual) throw HttpError.noEncontrado('El candidato no fue enviado a contratación');
+      const motivo = motivoNoDecideContinuidad({ examenEstado: actual.examen_estado, estadoLocal: actual.estado });
+      if (motivo) throw HttpError.conflicto(motivo, { codigo: 'SIN_DECISION_PENDIENTE' });
+
+      const efecto = efectoDecisionContinuidad(continuar);
+      const notaLimpia = nota?.trim() || null;
+      await repo.registrarExamen({
+        candidatoId,
+        evento: efecto.evento,
+        nota: notaLimpia,
+        origen: 'hydra',
+        marcadoPor: usuario.nombreCompleto ?? null,
+        marcadoEn: new Date(),
+        usuarioId: usuario.id,
+      });
+
+      const cambios = { examenEstado: efecto.examenEstado };
+      if (efecto.estadoLocal) {
+        cambios.estado = efecto.estadoLocal;
+        cambios.detalle = `No continúa: no asistió a exámenes médicos${notaLimpia ? ` (${notaLimpia})` : ''}`.slice(0, 255);
+      }
+      await repo.actualizarCandidato(candidatoId, cambios);
+
+      if (efecto.estadoHydra) {
+        const candidato = await candidatoRepo.buscarPorId(candidatoId);
+        if (candidato && candidato.estado === 'aprobado_final') {
+          await estadoServicio.cambiar({
+            repo: candidatoRepo,
+            candidato,
+            codigoDestino: efecto.estadoHydra,
+            usuarioId: usuario.id,
+            motivo: `No asistió a los exámenes médicos y selección no dio continuidad${notaLimpia ? `: ${notaLimpia}` : ''}`,
+          });
+        }
+      }
+
+      await repo.encolarEnvio({
+        tipo: 'continuidad',
+        loteId: actual.lote_id,
+        candidatoId,
+        metodo: 'POST',
+        ruta: `/candidatos/${candidatoId}/examenes/continuidad`,
+        payload: {
+          continuar,
+          nota: notaLimpia,
+          decidido_por: usuario.nombreCompleto?.slice(0, 150) ?? null,
+        },
+        idempotencyKey: randomUUID(),
+        enviadoPorId: usuario.id,
+      });
+    });
+    programarDespacho();
+    return (await listarExamenes()).find((c) => c.candidato_id === Number(candidatoId)) ?? null;
   }
 
   // ----------------------------------------------------- Fase 5: envío -------
@@ -178,6 +266,11 @@ function crearContratacionServicio({
         codigo: 'YA_REGISTRADO',
       });
     }
+    if (ESTADOS_CIERRE_EXAMENES.includes(actual.estado_hydra)) {
+      throw HttpError.conflicto('El candidato salió del proceso por los exámenes médicos', {
+        codigo: 'CERRADO_POR_EXAMENES',
+      });
+    }
     return actual;
   }
 
@@ -256,7 +349,8 @@ function crearContratacionServicio({
     if (envio.tipo === 'documento') return;
 
     if (decision.estado === 'enviado') {
-      if (envio.tipo === 'cancelacion') return; // ya se marcó 'cancelado' al encolar
+      // Ya se reflejaron al encolar: 'cancelado' o la decisión sobre el examen.
+      if (envio.tipo === 'cancelacion' || envio.tipo === 'continuidad') return;
       // `POST /lotes` responde `candidatos[]`; `PUT /candidatos/:id`, `candidato`.
       const resultados = respuesta.cuerpo?.candidatos ?? (respuesta.cuerpo?.candidato ? [respuesta.cuerpo.candidato] : []);
       for (const r of resultados) {
@@ -272,6 +366,10 @@ function crearContratacionServicio({
       const detalle = `Gestor rechazó el envío: ${respuesta.error ?? 'sin detalle'}`.slice(0, 255);
       if (envio.tipo === 'lote') {
         await repo.actualizarCandidatosDeLote(envio.lote_id, 'en_cola', { estado: 'error', detalle });
+      } else if (envio.tipo === 'continuidad') {
+        // La decisión ya quedó en la traza; el fallo se ve en los envíos del lote,
+        // con "Reintentar" (p. ej. SST ya había vuelto a marcar asistencia).
+        return;
       } else {
         await repo.actualizarCandidato(envio.candidato_id, { estado: 'error', detalle });
       }
@@ -395,6 +493,49 @@ function crearContratacionServicio({
   }
 
   /**
+   * SST marcó un examen en Gestor. Idempotente por la Idempotency-Key de Gestor:
+   * un reintento no duplica la marca. "No aprobó" saca al candidato del proceso
+   * (`no_apto_examenes`, con la nota de SST en el historial).
+   */
+  async function recibirExamen({ hydra_candidato_id: candidatoId, evento, nota, marcado_por: marcadoPor, marcado_en: marcadoEn }, idempotencyKey) {
+    return uow.ejecutar(async ({ contratacionRepo: repo, candidatoRepo }) => {
+      const contratacion = await repo.contratacionDe(candidatoId, { paraActualizar: true });
+      if (!contratacion) throw HttpError.noEncontrado('Hydra no tiene ese candidato en un lote de contratación');
+      if (await repo.examenPorClave(idempotencyKey)) {
+        return { candidatoId, evento, duplicado: true };
+      }
+
+      await repo.registrarExamen({
+        candidatoId,
+        evento,
+        nota: nota ?? null,
+        origen: 'gestor',
+        marcadoPor: marcadoPor ?? null,
+        marcadoEn: marcadoEn ? new Date(marcadoEn) : new Date(),
+        idempotencyKey,
+      });
+
+      const cambios = { examenEstado: EXAMEN_POR_EVENTO_SST[evento] };
+      if (evento === 'no_aprobado') {
+        cambios.estado = 'descartado';
+        cambios.detalle = `No aprobó los exámenes médicos (SST): ${nota ?? ''}`.slice(0, 255);
+        const candidato = await candidatoRepo.buscarPorId(candidatoId);
+        if (candidato && candidato.estado === 'aprobado_final') {
+          await estadoServicio.cambiar({
+            repo: candidatoRepo,
+            candidato,
+            codigoDestino: 'no_apto_examenes',
+            usuarioId: null,
+            motivo: `SST (Gestor Técnico): no aprobó los exámenes médicos. ${nota ?? ''}`.trim(),
+          });
+        }
+      }
+      await repo.actualizarCandidato(candidatoId, cambios);
+      return { candidatoId, evento, examenEstado: cambios.examenEstado };
+    });
+  }
+
+  /**
    * RRHH descartó al candidato. No cambia su estado en Hydra (decisión abierta 3
    * de conexionhydra.md §11): queda como nota en la contratación.
    */
@@ -417,6 +558,9 @@ function crearContratacionServicio({
     listarElegibles,
     listarLotes: () => contratacionRepo.listarLotes(),
     detalleLote,
+    listarExamenes,
+    decidirContinuidad,
+    recibirExamen,
     enviarLote,
     reenviarCandidato,
     cancelarCandidato,

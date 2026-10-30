@@ -102,6 +102,22 @@ reintenta.
   registró su checksum en `migraciones_aplicadas`, porque `npm run migrate` se niega a correr: las
   001-019 figuran como MODIFICADA (diferencia de checksum previa a este cambio, probablemente
   fines de línea CRLF). Revisarlo antes de correr el runner en otro ambiente.
+- **Exámenes médicos (migración 022, `conexionhydra.md` §16 en Gestor)**: el rol SST de Gestor
+  marca si el candidato asistió a los exámenes médicos y si los aprobó; cada marca llega a
+  `POST /api/integraciones/gestor/v1/examenes` (idempotente por `Idempotency-Key`) y queda en
+  `contratacion_examenes` y en `contratacion_candidatos.examen_estado`. **No aprobó** → el
+  candidato pasa a `no_apto_examenes` con la nota de SST en el historial (local `descartado`).
+  **No asistió** → selección decide en la pantalla **Exámenes médicos** (`/contratacion/examenes`,
+  permiso `decidir_continuidad_examenes`): "Dar continuidad" deja el examen `reagendado`; "No
+  continuar" lo pasa a `no_continua_examenes` (local `cancelado`). La decisión es un envío
+  `continuidad` del outbox (`POST /candidatos/:id/examenes/continuidad`); si SST ya volvió a
+  marcar la asistencia, Gestor responde 409 y el envío queda `fallido` (la decisión ya no aplica).
+  En `no_apto_examenes`/`no_continua_examenes` el candidato **ya no se reenvía ni se cancela**
+  (409 `CERRADO_POR_EXAMENES`): reenviar lo reabriría en Gestor sin pasar por la decisión.
+- **Despliegue de la 022**: va **antes** de que Gestor suba el código de la 089 (si no, los avisos
+  `/examenes` de Gestor fallan y hay que reintentarlos), y la 089 de Gestor antes de que alguien de
+  selección decida (si no, el envío `continuidad` queda fallido). En la práctica: aplicar 089 en
+  Gestor y 022 en Hydra, después subir los dos códigos. Se aplicó a mano en local, como la 021.
 - **El estado `contratado` solo lo pone el aviso de Gestor.**
 - **Un 409 de Gestor no es éxito** (a diferencia de la dirección inversa): `LOTE_CERRADO` deja el
   envío `fallido` y visible.

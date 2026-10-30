@@ -15,6 +15,8 @@ const {
   generarLoteExternoId,
   decidirResultadoEnvio,
   estadoLocalPorResultado,
+  motivoNoDecideContinuidad,
+  efectoDecisionContinuidad,
 } = require('../../src/modules/contratacion/contratacion.reglas');
 const { firmar, firmaValida, timestampVigente } = require('../../src/shared/seguridad/firmaHmac');
 
@@ -251,5 +253,26 @@ describe('firmaHmac (mismo algoritmo que Gestor)', () => {
     expect(timestampVigente('1000', 1300, 300)).toBe(true);
     expect(timestampVigente('1000', 1301, 300)).toBe(false);
     expect(timestampVigente('x', 1000, 300)).toBe(false);
+  });
+});
+
+describe('exámenes médicos de SST (022)', () => {
+  it('selección decide solo sobre un "no asistió" de un candidato en proceso', () => {
+    expect(motivoNoDecideContinuidad({ examenEstado: 'no_asistio', estadoLocal: 'recibido' })).toBeNull();
+    for (const examenEstado of [null, 'pendiente', 'reagendado', 'asistio', 'aprobado', 'no_aprobado']) {
+      expect(motivoNoDecideContinuidad({ examenEstado, estadoLocal: 'recibido' })).toMatch(/pendiente de decisión/);
+    }
+    for (const estadoLocal of ['registrado', 'descartado', 'cancelado']) {
+      expect(motivoNoDecideContinuidad({ examenEstado: 'no_asistio', estadoLocal })).toMatch(/ya no está en proceso/);
+    }
+  });
+
+  it('continuar reagenda; no continuar saca al candidato aquí y en Gestor', () => {
+    expect(efectoDecisionContinuidad(true)).toEqual({
+      evento: 'continuidad', examenEstado: 'reagendado', estadoLocal: null, estadoHydra: null,
+    });
+    expect(efectoDecisionContinuidad(false)).toEqual({
+      evento: 'no_continuidad', examenEstado: 'no_asistio', estadoLocal: 'cancelado', estadoHydra: 'no_continua_examenes',
+    });
   });
 });

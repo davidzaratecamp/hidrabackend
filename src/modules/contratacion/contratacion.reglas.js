@@ -268,6 +268,50 @@ function estadoLocalPorResultado(resultado, estadoActual) {
   }
 }
 
+// ---------------------------------------------- exámenes médicos (022) -----
+
+/** Lo que SST marca en Gestor y el estado de examen que deja. */
+const EXAMEN_POR_EVENTO_SST = {
+  asistio: 'asistio',
+  no_asistio: 'no_asistio',
+  aprobado: 'aprobado',
+  no_aprobado: 'no_aprobado',
+};
+
+const MAX_NOTA_EXAMEN = 1000;
+
+/**
+ * Estados de Hydra en los que los exámenes médicos cerraron el proceso: SST
+ * dio "no apto" o selección no dio continuidad. Ya no se reenvía ni se cancela:
+ * reenviar lo reabriría en Gestor sin pasar por la decisión.
+ */
+const ESTADOS_CIERRE_EXAMENES = Object.freeze(['no_apto_examenes', 'no_continua_examenes']);
+
+/**
+ * Selección solo decide sobre un "no asistió" y mientras el candidato siga en
+ * proceso en Gestor. Devuelve el motivo por el que no puede, o null.
+ */
+function motivoNoDecideContinuidad({ examenEstado, estadoLocal }) {
+  if (['registrado', 'descartado', 'cancelado'].includes(estadoLocal)) {
+    return 'El candidato ya no está en proceso de contratación';
+  }
+  if (examenEstado !== 'no_asistio') {
+    return 'No hay una inasistencia a exámenes médicos pendiente de decisión';
+  }
+  return null;
+}
+
+/**
+ * Efecto en Hydra de una decisión de selección: continuar deja el examen
+ * "reagendado" (SST vuelve a marcar asistencia); no continuar lo saca del
+ * proceso aquí y en Gestor.
+ */
+function efectoDecisionContinuidad(continuar) {
+  return continuar
+    ? { evento: 'continuidad', examenEstado: 'reagendado', estadoLocal: null, estadoHydra: null }
+    : { evento: 'no_continuidad', examenEstado: 'no_asistio', estadoLocal: 'cancelado', estadoHydra: 'no_continua_examenes' };
+}
+
 module.exports = {
   FIRMA_COMPLETA,
   FIRMA_SIN_CONSULTA,
@@ -285,4 +329,9 @@ module.exports = {
   decidirResultadoEnvio,
   estadoLocalPorResultado,
   instanteIso,
+  EXAMEN_POR_EVENTO_SST,
+  MAX_NOTA_EXAMEN,
+  ESTADOS_CIERRE_EXAMENES,
+  motivoNoDecideContinuidad,
+  efectoDecisionContinuidad,
 };

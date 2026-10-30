@@ -76,7 +76,10 @@ function crearContratacionRepositorio({ db }) {
 
   async function contratacionDe(candidatoId, { paraActualizar = false } = {}) {
     const [filas] = await db.query(
-      `SELECT cc.*, l.lote_externo_id
+      // El estado de Hydra va en subconsulta para que FOR UPDATE no bloquee el catálogo.
+      `SELECT cc.*, l.lote_externo_id,
+              (SELECT ec.codigo FROM candidatos c JOIN estados_candidato ec ON ec.id = c.estado_id
+                WHERE c.id = cc.candidato_id) AS estado_hydra
          FROM contratacion_candidatos cc
          JOIN contratacion_lotes l ON l.id = cc.lote_id
         WHERE cc.candidato_id = ? ${paraActualizar ? 'FOR UPDATE' : ''}`,
@@ -155,9 +158,10 @@ function crearContratacionRepositorio({ db }) {
     return res.insertId || null;
   }
 
-  async function actualizarCandidato(candidatoId, { estado, detalle, version, usersCompanyId }) {
+  async function actualizarCandidato(candidatoId, { estado, detalle, version, usersCompanyId, examenEstado }) {
     const sets = [];
     const params = [];
+    if (examenEstado !== undefined) { sets.push('examen_estado = ?'); params.push(examenEstado); }
     if (estado !== undefined) { sets.push('estado = ?'); params.push(estado); }
     if (detalle !== undefined) { sets.push('detalle = ?'); params.push(detalle); }
     if (version !== undefined) { sets.push('version = ?'); params.push(version); }
@@ -236,7 +240,7 @@ function crearContratacionRepositorio({ db }) {
   async function candidatosDeLote(loteId) {
     const [filas] = await db.query(
       `SELECT cc.candidato_id, cc.version, cc.estado, cc.detalle, cc.nota_antecedentes,
-              cc.users_company_id, cc.updated_at,
+              cc.examen_estado, cc.users_company_id, cc.updated_at,
               c.primer_nombre, c.segundo_nombre, c.primer_apellido, c.segundo_apellido,
               c.numero_documento, ca.codigo AS cargo, ec.codigo AS estado_hydra
          FROM contratacion_candidatos cc
@@ -246,6 +250,61 @@ function crearContratacionRepositorio({ db }) {
         WHERE cc.lote_id = ?
         ORDER BY c.primer_apellido, c.primer_nombre`,
       [loteId]
+    );
+    return filas;
+  }
+
+  // ------------------------------------------------- exámenes médicos (022) --
+  /** Marca de examen ya recibida con esta Idempotency-Key (reintento de Gestor). */
+  async function examenPorClave(idempotencyKey) {
+    if (!idempotencyKey) return null;
+    const [filas] = await db.query('SELECT id FROM contratacion_examenes WHERE idempotency_key = ?', [idempotencyKey]);
+    return filas[0] ?? null;
+  }
+
+  async function registrarExamen({ candidatoId, evento, nota, origen, marcadoPor, marcadoEn, usuarioId, idempotencyKey }) {
+    const [res] = await db.query(
+      `INSERT INTO contratacion_examenes
+         (candidato_id, evento, nota, origen, marcado_por, marcado_en, usuario_id, idempotency_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [candidatoId, evento, nota ?? null, origen, marcadoPor ?? null, marcadoEn, usuarioId ?? null, idempotencyKey ?? null]
+    );
+    return res.insertId;
+  }
+
+  /** Traza de exámenes de varios candidatos, en orden. */
+  async function examenesDe(candidatoIds) {
+    if (candidatoIds.length === 0) return [];
+    const [filas] = await db.query(
+      `SELECT id, candidato_id, evento, nota, origen, marcado_por, marcado_en
+         FROM contratacion_examenes
+        WHERE candidato_id IN (?)
+        ORDER BY candidato_id, marcado_en, id`,
+      [candidatoIds]
+    );
+    return filas;
+  }
+
+  /**
+   * Candidatos con alguna marca de SST, para la pantalla de selección. Primero
+   * los que esperan decisión (no asistió y siguen en proceso).
+   */
+  async function candidatosConExamen() {
+    const [filas] = await db.query(
+      `SELECT cc.candidato_id, cc.estado, cc.detalle, cc.examen_estado, cc.updated_at,
+              l.id AS lote_id, l.nombre AS lote_nombre,
+              c.primer_nombre, c.segundo_nombre, c.primer_apellido, c.segundo_apellido,
+              c.numero_documento, ca.nombre AS cargo, cl.nombre AS cliente, ec.codigo AS estado_hydra,
+              ec.nombre AS estado_hydra_nombre
+         FROM contratacion_candidatos cc
+         JOIN contratacion_lotes l ON l.id = cc.lote_id
+         JOIN candidatos c ON c.id = cc.candidato_id
+         JOIN cargos ca ON ca.id = c.cargo_id
+         JOIN clientes cl ON cl.id = c.cliente_id
+         JOIN estados_candidato ec ON ec.id = c.estado_id
+        WHERE cc.examen_estado IS NOT NULL
+        ORDER BY (cc.examen_estado = 'no_asistio' AND cc.estado NOT IN ('registrado','descartado','cancelado')) DESC,
+                 cc.updated_at DESC`
     );
     return filas;
   }
@@ -352,6 +411,10 @@ function crearContratacionRepositorio({ db }) {
     enviosDeLote,
     buscarEnvio,
     reintentarEnvio,
+    examenPorClave,
+    registrarExamen,
+    examenesDe,
+    candidatosConExamen,
   };
 }
 
