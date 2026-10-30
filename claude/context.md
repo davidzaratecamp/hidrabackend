@@ -153,7 +153,8 @@ Otros archivos notables: `NuevoCandidato_clean.jsx` en `components/reclutador/` 
 | `seleccion.routes.js` | `/api/seleccion` | candidatos citados/aprobados/rechazados, oleadas, estadísticas, asistencia, evaluación, decisión final |
 | `desprendibles.routes.js` | `/api/desprendibles` | meses disponibles y descarga de PDF de desprendible de nómina (vía API externa IntraCar) |
 | `modules/contratacion/contratacion.routes.js` | `/api/contratacion` | elegibles, lotes enviados a Gestor, reenviar/cancelar candidato, reintentar envío (permiso `enviar_contratacion`) |
-| `modules/contratacion/contratacion.routes.js` | `/api/integraciones/gestor/v1` | avisos de Gestor (`/contrataciones`, `/descartes`), máquina a máquina con firma HMAC, sin JWT |
+| `modules/contratacion/contratacion.routes.js` | `/api/contratacion/examenes` | exámenes médicos que marca SST en Gestor y decisión de continuidad de quien no asistió (`POST /candidatos/:id/continuidad`, permiso `decidir_continuidad_examenes`, migración 022) |
+| `modules/contratacion/contratacion.routes.js` | `/api/integraciones/gestor/v1` | avisos de Gestor (`/contrataciones`, `/descartes`, `/examenes`), máquina a máquina con firma HMAC, sin JWT |
 | `modules/antecedentes/antecedentes.routes.js` | `/api/antecedentes/candidatos/:id/unificado` | todos los soportes de antecedentes en un solo PDF con el nombre del candidato (2026-10-02, `restructuracion.md` §11.13) |
 | `modules/formulario/formulario.routes.js` | `/api/firma/:id/unificado` | hoja de vida + tratamiento de datos firmados (FirmaCloud) en un solo PDF con el nombre del candidato (2026-10-02, §11.13) |
 
@@ -167,6 +168,12 @@ Otros archivos notables: `NuevoCandidato_clean.jsx` en `components/reclutador/` 
   pasa a `contratado` solo con el aviso de Gestor. Mapa del lado de Hydra en
   [`integracion-gestor.md`](integracion-gestor.md). El plan completo y la guía de despliegue están
   en `conexionhydra.md`, en el repo de Gestor. Migraciones `018`–`020`, aplicadas solo en local.
+- **Documentos y exámenes médicos (2026-10-30):** la 021 manda a Gestor los firmados y los
+  antecedentes. La 022 recibe las marcas de exámenes médicos del rol **SST** de Gestor; selección
+  decide la continuidad de quien no asistió en la pantalla "Exámenes médicos" (`/contratacion/examenes`).
+  Detalle en [`integracion-gestor.md`](integracion-gestor.md) y en `conexionhydra.md` §15-§16 de Gestor.
+  **Las migraciones de Hydra van en la base de Hydra**: el 2026-10-30 la 022 se corrió por error en
+  Workbench contra la base de Gestor (`call_center_support`) y falló sin aplicar nada.
 - **Clínica Agentes (2026-10-02):** "Pendientes de decisión" y "Rechazados en evaluación" vacías en
   producción **no es bug** — son colas por estado actual (`aprobado`/`rechazado`) y todos los
   evaluados ya tenían decisión final. Diagnóstico y cambios ofrecidos en `restructuracion.md` §11.14.
