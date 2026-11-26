@@ -15,6 +15,7 @@ const SELECT_BASE = `
          td.codigo AS tipo_documento, td.nacionalidad,
          cl.codigo AS cliente, ca.codigo AS cargo,
          ci.codigo AS ciudad, fr.codigo AS fuente_reclutamiento,
+         el.codigo AS experiencia_laboral,
          tl.codigo AS tipificacion_llamada, eg.codigo AS estado_gestion,
          ec.codigo AS estado, ec.nombre AS estado_nombre, ec.etapa AS estado_etapa,
          u.nombre_completo AS reclutador_nombre, u.email AS reclutador_email,
@@ -59,6 +60,7 @@ const SELECT_BASE = `
     JOIN estados_candidato ec ON ec.id = c.estado_id
     LEFT JOIN ciudades ci     ON ci.id = c.ciudad_id
     LEFT JOIN fuentes_reclutamiento fr ON fr.id = c.fuente_reclutamiento_id
+    LEFT JOIN experiencias_laborales el ON el.id = c.experiencia_laboral_id
     LEFT JOIN tipificaciones_llamada tl ON tl.id = c.tipificacion_llamada_id
     LEFT JOIN estados_gestion_reclutamiento eg ON eg.id = c.estado_gestion_id
     LEFT JOIN usuarios u      ON u.id = c.reclutador_id
@@ -107,15 +109,15 @@ function crearCandidatoRepositorio({ db }) {
           contacto_llamada, contacto_whatsapp,
           cliente_id, cargo_id, ciudad_id, fuente_reclutamiento_id,
           tipificacion_llamada_id, estado_gestion_id, observaciones_generales,
-          perfil, citado, estado_id, reclutador_id)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          perfil, experiencia_laboral_id, citado, estado_id, reclutador_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         datos.primerNombre, datos.segundoNombre, datos.primerApellido, datos.segundoApellido,
         datos.tipoDocumentoId, datos.numeroDocumento, datos.edad, datos.email, datos.celular,
         datos.contactoLlamada, datos.contactoWhatsapp,
         datos.clienteId, datos.cargoId, datos.ciudadId, datos.fuenteReclutamientoId,
         datos.tipificacionLlamadaId, datos.estadoGestionId, datos.observacionesGenerales,
-        datos.perfil, datos.citado, datos.estadoId, datos.reclutadorId,
+        datos.perfil, datos.experienciaLaboralId, datos.citado, datos.estadoId, datos.reclutadorId,
       ]
     );
     return res.insertId;
@@ -278,6 +280,7 @@ function crearCandidatoRepositorio({ db }) {
       contactoLlamada: 'contacto_llamada', contactoWhatsapp: 'contacto_whatsapp',
       clienteId: 'cliente_id', cargoId: 'cargo_id', ciudadId: 'ciudad_id',
       fuenteReclutamientoId: 'fuente_reclutamiento_id',
+      experienciaLaboralId: 'experiencia_laboral_id',
       tipificacionLlamadaId: 'tipificacion_llamada_id',
       estadoGestionId: 'estado_gestion_id',
       observacionesGenerales: 'observaciones_generales',

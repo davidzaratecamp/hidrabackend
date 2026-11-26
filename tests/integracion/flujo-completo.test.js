@@ -61,6 +61,7 @@ function datosCandidatoBase(overrides = {}) {
     citado: false,
     estadoGestion: '#Errado',
     fuenteReclutamiento: 'Computrabajo',
+    experienciaLaboral: '1 a 2 años',
     ...overrides,
   };
 }
@@ -233,6 +234,7 @@ describe('Flujo completo del embudo de reclutamiento', () => {
         estadoGestion: '#Errado',
         ciudad: 'bogota',
         fuenteReclutamiento: 'Computrabajo',
+        experienciaLaboral: '1 a 2 años',
         tipificacionLlamada: 'Interesado',
       });
 
@@ -244,6 +246,8 @@ describe('Flujo completo del embudo de reclutamiento', () => {
     // desde la migración 007. `citado` vuelve tipado, no como 1/0.
     expect(res.body.datos.perfil).toBe('Bachiller con experiencia comercial');
     expect(res.body.datos.citado).toBe(false);
+    // EXPERIENCIA (migración 023) vuelve como el código del catálogo.
+    expect(res.body.datos.experiencia_laboral).toBe('1 a 2 años');
 
     // El nombre se parte con la convención colombiana: últimas dos = apellidos.
     expect(res.body.datos).toMatchObject({
@@ -270,6 +274,35 @@ describe('Flujo completo del embudo de reclutamiento', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error.codigo).toBe('CARGO_NO_DISPONIBLE');
+  });
+
+  it('3b-ter. EXPERIENCIA es obligatoria y solo acepta valores del catálogo', async () => {
+    const catalogos = await request(app).get('/api/catalogos');
+    expect(catalogos.body.datos.experiencias_laborales.map((e) => e.codigo)).toEqual([
+      'Primer empleo', 'Menos de 6 meses', '6 meses a 1 año', '1 a 2 años', 'Más de 2 años',
+    ]);
+
+    const sinExperiencia = await request(app)
+      .post('/api/candidatos')
+      .set(auth('reclutador'))
+      .send(datosCandidatoBase({
+        nombreCompleto: 'Sin Experiencia',
+        celular: '3001114444',
+        experienciaLaboral: undefined,
+      }));
+    expect(sinExperiencia.status).toBe(400);
+    expect(JSON.stringify(sinExperiencia.body.error)).toMatch(/experienciaLaboral/);
+
+    const invalida = await request(app)
+      .post('/api/candidatos')
+      .set(auth('reclutador'))
+      .send(datosCandidatoBase({
+        nombreCompleto: 'Experiencia Invalida',
+        celular: '3001115555',
+        experienciaLaboral: '10 años',
+      }));
+    expect(invalida.status).toBe(400);
+    expect(invalida.body.error.codigo).toBe('CATALOGO_INVALIDO');
   });
 
   it('3b-bis. una tipificación retirada del catálogo deja de aceptarse', async () => {
@@ -301,7 +334,7 @@ describe('Flujo completo del embudo de reclutamiento', () => {
       .set(auth('reclutador'))
       .send(datosCandidatoBase({
         nombreCompleto: 'Citado Al Registrar',
-        numeroDocumento: `${String(sufijo).slice(-9)}9`,
+        numeroDocumento: `${String(sufijo).slice(-9)}900`,
         celular: '3009998888',
         cliente: 'Obamacare',
         cargo: 'Customer Service',

@@ -24,7 +24,7 @@ function crearReportesRepositorio({ db }) {
            c.contacto_llamada, c.contacto_whatsapp, c.perfil, c.citado,
            td.codigo AS tipo_documento, cl.nombre AS cliente, ca.nombre AS cargo,
            ec.codigo AS estado, ec.nombre AS estado_nombre,
-           eg.nombre AS estado_gestion,
+           eg.nombre AS estado_gestion, el.nombre AS experiencia_laboral,
            u.nombre_completo AS reclutador,
            ult.created_at AS fecha_citado, ult.asistio, mi.nombre AS motivo_inasistencia,
            ult.seguimiento_llamada, ult.seguimiento_whatsapp,
@@ -37,6 +37,7 @@ function crearReportesRepositorio({ db }) {
       JOIN cargos ca ON ca.id = c.cargo_id
       JOIN estados_candidato ec ON ec.id = c.estado_id
       LEFT JOIN estados_gestion_reclutamiento eg ON eg.id = c.estado_gestion_id
+      LEFT JOIN experiencias_laborales el ON el.id = c.experiencia_laboral_id
       LEFT JOIN usuarios u ON u.id = c.reclutador_id
       LEFT JOIN candidato_decision_final df ON df.candidato_id = c.id
       -- Última citación del candidato: la tabla es 1:N para permitir reagendar.

@@ -680,7 +680,7 @@ llevó a la decisión de reescribir.
 
 ---
 
-## 11. Estado actual y cambios posteriores a este documento (actualizado 2026-10-20)
+## 11. Estado actual y cambios posteriores a este documento (actualizado 2026-11-26)
 
 Este documento se escribió el 2026-08-27, como el contrato inicial de la reescritura. Desde
 entonces la reescritura se ejecutó casi por completo (§7) y, sobre la marcha, se tomaron decisiones
@@ -1434,3 +1434,47 @@ Contratación y quitarle a los de Formación lo que ya no les toca (la migració
 convierte los `.sql` a CRLF y cambia el checksum; la 020 se aplicó con el mismo procedimiento del
 runner (transacción + `migraciones_aplicadas`) solo para ese archivo. En el servidor (Linux) no
 debería pasar.
+
+### 11.20 Campo EXPERIENCIA en el registro del candidato (2026-11-26)
+
+Pedido del usuario: un campo nuevo, **EXPERIENCIA**, en "Nuevo Candidato", en el cargue masivo
+por Excel y en el Excel de descarga. Decisiones del usuario: una escala por tiempo y
+**obligatorio**, igual que los demás campos del registro.
+
+**Migración `023_experiencia_registro.sql`** (aplicada solo en local): catálogo
+`experiencias_laborales` (misma forma que `fuentes_reclutamiento`) con *Primer empleo*, *Menos de
+6 meses*, *6 meses a 1 año*, *1 a 2 años* y *Más de 2 años*, y la columna
+`candidatos.experiencia_laboral_id` (NULL en la base: los candidatos anteriores no lo tienen; la
+obligatoriedad la impone `candidato.schema.js::crear`). Agregar o renombrar una opción es un
+INSERT/UPDATE en el catálogo. No reemplaza a `candidato_experiencia_resumen.primer_empleo_formal`,
+que responde el propio candidato en el paso 4 del formulario.
+
+**Backend**: `experienciaLaboral` (código del catálogo) en `crear` (obligatorio) y `actualizar`
+(opcional); el candidato devuelve `experiencia_laboral`. El cargue por Excel exige la columna
+**EXPERIENCIA** (un archivo con la plantilla vieja se rechaza: hay que descargar la plantilla nueva,
+que también trae las opciones en la hoja "Referencia") y la compara sin distinguir
+mayúsculas/espacios. El Excel de descarga la agrega **después de PERFIL**, así que de ahí en
+adelante todas las columnas se corren una posición; el Excel del histórico la emite vacía.
+
+**Frontend**: desplegable "Experiencia" (obligatorio) en la sección Gestión de
+`CandidatoCampos.jsx` (alta y edición) y el dato en la ficha del perfil.
+
+**Pruebas**: `candidatos.importar.test.js` (columna faltante, vacía, fuera del catálogo, valor
+flexible) y `flujo-completo.test.js` 3b-ter. Suite: 215/216 (la falla preexistente de
+`reportes.test.js`). La 3d usaba un documento fijo terminado en `9` que chocaba con el contador de
+`datosCandidatoBase` al sumar llamadas; ahora termina en `900`. Frontend: lint de los archivos
+tocados y build OK; no probado en navegador.
+
+**Corregido en la misma sesión (bug preexistente)**: `historico/historico.excel.js::filaHistorico`
+no emitía la columna TELÉFONO, así que en el Excel del histórico todo lo que seguía a CORREO salía
+corrido una columna a la izquierda de su encabezado. Ahora emite `numero_celular` (agregado al
+SELECT de `candidatosBaseReclutamiento`, solo lectura). Prueba: `tests/unidad/historico.excel.test.js`.
+
+**Candidatos registrados antes de la 023**: quedan con EXPERIENCIA vacía y no se rellenan solos.
+Editarlos funciona igual que antes: el desplegable aparece en "Selecciona…" y se puede guardar sin
+elegirla (en `actualizar` es opcional, y el asterisco del formulario es solo visual). Si se elige,
+queda guardada. Una vez guardada, se puede cambiar de opción, pero no volver a dejarla vacía.
+
+**Para desplegar**: aplicar la 023 en la base de Hydra (`SELECT DATABASE()` antes si es a mano, y
+registrarla en `migraciones_aplicadas`), subir backend y frontend juntos, y pasarle a Reclutamiento
+la plantilla nueva del cargue.

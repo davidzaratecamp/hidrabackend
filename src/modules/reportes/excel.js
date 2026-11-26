@@ -36,6 +36,7 @@ const GRUPOS = [
   { label: 'TELÉFONO' },
   { label: 'CONTACTO', sub: ['LLAMADA', 'WHATSAPP'] },
   { label: 'PERFIL' },
+  { label: 'EXPERIENCIA' },
   { label: 'CITADO' },
   { label: 'ESTADO GESTIÓN RECLUTAMIENTO' },
   { label: 'SEGUIMIENTO ASISTENCIA', sub: ['LLAMADA', 'GLOBAL/WA'] },
@@ -114,6 +115,9 @@ function filaBase(c, fechaValor) {
     whatsapp,
     // PERFIL y CITADO se capturan desde 2026-08-30 en el registro (migración 007).
     c.perfil || '',
+    // EXPERIENCIA: se captura en el registro desde la migración 023; los
+    // candidatos anteriores salen en blanco.
+    c.experiencia_laboral || '',
     // Sí si se marcó al registrar O si tiene una citación real: un candidato
     // registrado con Citado = No y citado después salía "No" con asistencia y
     // decisión llenas. Misma regla que `resolverCitado` del perfil (§11.12).

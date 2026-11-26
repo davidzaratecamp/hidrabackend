@@ -27,6 +27,7 @@ const COLUMNAS = [
   { encabezado: 'CONTACTO LLAMADA', campo: 'contactoLlamada', siNo: true },
   { encabezado: 'CONTACTO WHATSAPP', campo: 'contactoWhatsapp', siNo: true },
   { encabezado: 'PERFIL', campo: 'perfil' },
+  { encabezado: 'EXPERIENCIA', campo: 'experienciaLaboral' },
   { encabezado: 'CITADO', campo: 'citado', siNo: true },
   { encabezado: 'ESTADO GESTIÓN RECLUTAMIENTO', campo: 'estadoGestion' },
   { encabezado: 'FUENTE DE RECLUTAMIENTO', campo: 'fuenteReclutamiento' },

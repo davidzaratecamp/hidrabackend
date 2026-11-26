@@ -267,7 +267,7 @@ function crearHistoricoRepositorio({ db }) {
 
     const [filas] = await db.query(
       `SELECT c.primer_nombre, c.segundo_nombre, c.primer_apellido, c.segundo_apellido,
-              c.tipo_documento, c.numero_documento, c.edad, c.email_personal,
+              c.tipo_documento, c.numero_documento, c.edad, c.email_personal, c.numero_celular,
               c.contacto_llamada, c.contacto_whatsapp, c.cliente, c.cargo,
               c.estado, c.created_at, c.asistio_citacion, c.motivo_inasistencia,
               c.antecedentes_adres, c.antecedentes_pol, c.antecedentes_comp, c.antecedentes_procu,

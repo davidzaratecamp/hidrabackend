@@ -90,6 +90,7 @@ async function candidatoCompleto(nombre) {
       citado: false,
       estadoGestion: '#Errado',
       fuenteReclutamiento: 'Computrabajo',
+      experienciaLaboral: '1 a 2 años',
     });
   expect(creado.status).toBe(201);
   const id = creado.body.datos.id;
@@ -231,18 +232,21 @@ describe('Exportación a Excel', () => {
     expect(fila.getCell(10).value).toBe('3005551234');
     // PERFIL ya no sale en blanco: se captura en el registro (migración 007).
     expect(fila.getCell(13).value).toBe('COMERCIAL CON EXPERIENCIA');
+    // EXPERIENCIA (migración 023), justo después de PERFIL.
+    expect(hoja.getRow(1).getCell(14).value).toBe('EXPERIENCIA');
+    expect(fila.getCell(14).value).toBe('1 A 2 AÑOS');
     // CITADO: se registró con Citado = No, pero tiene una citación real.
-    expect(fila.getCell(14).value).toBe('SÍ');
+    expect(fila.getCell(15).value).toBe('SÍ');
     // ESTADO GESTIÓN: solo lo que coloca el reclutador. Con citación sale
     // CITADO —ni el '#Errado' del registro ni un estado de Selección como
     // APROBADO FINAL— (§11.18).
-    expect(fila.getCell(15).value).toBe('CITADO');
-    // SEGUIMIENTO ASISTENCIA (columnas 16/17): el candidato del beforeAll
+    expect(fila.getCell(16).value).toBe('CITADO');
+    // SEGUIMIENTO ASISTENCIA (columnas 17/18): el candidato del beforeAll
     // respondió la llamada antes de la entrevista (SÍ) y el WhatsApp recién
     // DESPUÉS de marcarse la asistencia — el Excel debe salir con el valor
     // más reciente de cada canal, no con el que había antes de la entrevista.
-    expect(fila.getCell(16).value).toBe('SÍ');
     expect(fila.getCell(17).value).toBe('SÍ');
+    expect(fila.getCell(18).value).toBe('SÍ');
     // La FECHA sale de candidato_citaciones, no de una columna sin escritor.
     expect(fila.getCell(1).value).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
   });
@@ -262,10 +266,10 @@ describe('Exportación a Excel', () => {
     const hoja = await leerHoja(res);
     const fila = hoja.getRow(3);
     expect(fila.getCell(5).value).toBe('MARCELA ANDREA PINEDA ROJAS');
-    // APROBADO (columna 24) y antecedente ADRES (columna 20), con TELÉFONO
-    // corriendo el resto de columnas una posición a la derecha.
-    expect(fila.getCell(24).value).toBe('SÍ');
-    expect(fila.getCell(20).value).toBe('APROBADO');
+    // APROBADO (columna 25) y antecedente ADRES (columna 21), con TELÉFONO y
+    // EXPERIENCIA corriendo el resto de columnas a la derecha.
+    expect(fila.getCell(25).value).toBe('SÍ');
+    expect(fila.getCell(21).value).toBe('APROBADO');
   });
 
   it('el rango filtra de verdad: un día sin citaciones sale sin filas', async () => {

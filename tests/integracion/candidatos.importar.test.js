@@ -41,6 +41,7 @@ function filaCandidatoBase(overrides = {}) {
     citado: 'No',
     estadoGestion: '#Errado',
     fuenteReclutamiento: 'Computrabajo',
+    experienciaLaboral: '1 a 2 años',
     ...overrides,
   };
 }
@@ -275,6 +276,65 @@ describe('Carga masiva de candidatos por Excel', () => {
       .get(`/api/candidatos?busqueda=${docBueno1}`)
       .set(auth('reclutador'));
     expect(buenos.body.datos).toHaveLength(0);
+  });
+
+  describe('columna EXPERIENCIA (migración 023)', () => {
+    const filaExperiencia = (n, overrides) =>
+      filaCandidatoBase({
+        cliente: 'Obamacare',
+        cargo: 'Agente',
+        nombreCompleto: `Excel Experiencia ${n}`,
+        tipoDocumento: 'CC',
+        numeroDocumento: documento(`4${n}`),
+        celular: `300777000${n}`,
+        ...overrides,
+      });
+
+    it('un archivo sin la columna se rechaza entero', async () => {
+      const workbook = new ExcelJS.Workbook();
+      const hoja = workbook.addWorksheet('Candidatos');
+      const sinExperiencia = COLUMNAS.filter((c) => c.encabezado !== 'EXPERIENCIA');
+      hoja.addRow(sinExperiencia.map((c) => c.encabezado));
+      const fila = filaExperiencia(1);
+      hoja.addRow(sinExperiencia.map((c) => fila[c.campo] ?? ''));
+
+      const res = await subir('reclutador', await workbook.xlsx.writeBuffer());
+      expect(res.status).toBe(400);
+      expect(res.body.error.codigo).toBe('ARCHIVO_INVALIDO');
+      expect(res.body.error.mensaje).toMatch(/EXPERIENCIA/);
+    });
+
+    it('vacía o con un valor fuera del catálogo, señala la fila', async () => {
+      const buffer = await construirExcel([
+        filaExperiencia(2, { experienciaLaboral: undefined }),
+        filaExperiencia(3, { experienciaLaboral: '10 años' }),
+      ]);
+
+      const res = await subir('reclutador', buffer);
+      expect(res.status).toBe(400);
+      expect(res.body.error.codigo).toBe('ERRORES_EN_ARCHIVO');
+      const [vacia, invalida] = res.body.error.detalles.filas;
+      expect(vacia.fila).toBe(2);
+      expect(vacia.errores.join(' ')).toMatch(/EXPERIENCIA/);
+      expect(invalida.fila).toBe(3);
+      expect(invalida.errores.join(' ')).toMatch(/10 años/);
+    });
+
+    it('acepta el valor sin importar mayúsculas y lo guarda', async () => {
+      const doc = documento('44');
+      documentosDeCandidatos.push(doc);
+      const buffer = await construirExcel([
+        filaExperiencia(4, { numeroDocumento: doc, experienciaLaboral: ' primer EMPLEO ' }),
+      ]);
+
+      const res = await subir('reclutador', buffer);
+      expect(res.status).toBe(200);
+
+      const lista = await request(app)
+        .get(`/api/candidatos?busqueda=${doc}`)
+        .set(auth('reclutador'));
+      expect(lista.body.datos[0].experiencia_laboral).toBe('Primer empleo');
+    });
   });
 
   it('dos reclutadores suben, al mismo tiempo, un archivo con el mismo documento: solo uno gana, ninguno queda a medias', async () => {

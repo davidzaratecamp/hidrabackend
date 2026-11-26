@@ -70,6 +70,7 @@ function crearCandidatoServicio({ candidatoRepo, catalogoRepo, estadoServicio, u
     const opcionales = [
       ['ciudad', 'ciudades', 'ciudadId'],
       ['fuenteReclutamiento', 'fuentes_reclutamiento', 'fuenteReclutamientoId'],
+      ['experienciaLaboral', 'experiencias_laborales', 'experienciaLaboralId'],
       ['tipificacionLlamada', 'tipificaciones_llamada', 'tipificacionLlamadaId'],
     ];
     for (const [campo, catalogo, destino] of opcionales) {
@@ -128,6 +129,7 @@ function crearCandidatoServicio({ candidatoRepo, catalogoRepo, estadoServicio, u
       ...ref,
       ciudadId: ref.ciudadId ?? null,
       fuenteReclutamientoId: ref.fuenteReclutamientoId ?? null,
+      experienciaLaboralId: ref.experienciaLaboralId ?? null,
       tipificacionLlamadaId: ref.tipificacionLlamadaId ?? null,
       // "Estado gestión" es el motivo por el que NO se citó: con Citado = Sí no
       // aplica y se descarta. El formulario ya lo vacía, pero la importación por
@@ -354,6 +356,10 @@ function crearCandidatoServicio({ candidatoRepo, catalogoRepo, estadoServicio, u
 
       seccion('FUENTE DE RECLUTAMIENTO');
       for (const f of await catalogoRepo.listarSimple('fuentes_reclutamiento')) linea(f.codigo, f.nombre);
+      fila += 1;
+
+      seccion('EXPERIENCIA');
+      for (const e of await catalogoRepo.listarSimple('experiencias_laborales')) linea(e.codigo, e.nombre);
       fila += 1;
 
       seccion('ESTADO GESTIÓN RECLUTAMIENTO (obligatorio solo cuando CITADO = No)');

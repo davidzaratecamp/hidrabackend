@@ -12,6 +12,7 @@ const TABLAS_SIMPLES = Object.freeze({
   tipos_documento: 'tipos_documento',
   ciudades: 'ciudades',
   fuentes_reclutamiento: 'fuentes_reclutamiento',
+  experiencias_laborales: 'experiencias_laborales',
   tipificaciones_llamada: 'tipificaciones_llamada',
   motivos_inasistencia: 'motivos_inasistencia',
   estados_civiles: 'estados_civiles',
