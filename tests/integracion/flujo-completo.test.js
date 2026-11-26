@@ -61,7 +61,7 @@ function datosCandidatoBase(overrides = {}) {
     citado: false,
     estadoGestion: '#Errado',
     fuenteReclutamiento: 'Computrabajo',
-    experienciaLaboral: '1 a 2 años',
+    experienciaLaboral: 'Call center',
     ...overrides,
   };
 }
@@ -234,7 +234,7 @@ describe('Flujo completo del embudo de reclutamiento', () => {
         estadoGestion: '#Errado',
         ciudad: 'bogota',
         fuenteReclutamiento: 'Computrabajo',
-        experienciaLaboral: '1 a 2 años',
+        experienciaLaboral: 'Call center',
         tipificacionLlamada: 'Interesado',
       });
 
@@ -247,7 +247,7 @@ describe('Flujo completo del embudo de reclutamiento', () => {
     expect(res.body.datos.perfil).toBe('Bachiller con experiencia comercial');
     expect(res.body.datos.citado).toBe(false);
     // EXPERIENCIA (migración 023) vuelve como el código del catálogo.
-    expect(res.body.datos.experiencia_laboral).toBe('1 a 2 años');
+    expect(res.body.datos.experiencia_laboral).toBe('Call center');
 
     // El nombre se parte con la convención colombiana: últimas dos = apellidos.
     expect(res.body.datos).toMatchObject({
@@ -279,7 +279,7 @@ describe('Flujo completo del embudo de reclutamiento', () => {
   it('3b-ter. EXPERIENCIA es obligatoria y solo acepta valores del catálogo', async () => {
     const catalogos = await request(app).get('/api/catalogos');
     expect(catalogos.body.datos.experiencias_laborales.map((e) => e.codigo)).toEqual([
-      'Primer empleo', 'Menos de 6 meses', '6 meses a 1 año', '1 a 2 años', 'Más de 2 años',
+      'Primer empleo', 'Call center', 'Venta presencial',
     ]);
 
     const sinExperiencia = await request(app)
@@ -303,6 +303,18 @@ describe('Flujo completo del embudo de reclutamiento', () => {
       }));
     expect(invalida.status).toBe(400);
     expect(invalida.body.error.codigo).toBe('CATALOGO_INVALIDO');
+
+    // Las opciones de tiempo de la 023 se retiraron en la 024: ya no se aceptan.
+    const retirada = await request(app)
+      .post('/api/candidatos')
+      .set(auth('reclutador'))
+      .send(datosCandidatoBase({
+        nombreCompleto: 'Experiencia Retirada',
+        celular: '3001116666',
+        experienciaLaboral: '1 a 2 años',
+      }));
+    expect(retirada.status).toBe(400);
+    expect(retirada.body.error.codigo).toBe('CATALOGO_INVALIDO');
   });
 
   it('3b-bis. una tipificación retirada del catálogo deja de aceptarse', async () => {

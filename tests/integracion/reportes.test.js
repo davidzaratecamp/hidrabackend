@@ -90,7 +90,7 @@ async function candidatoCompleto(nombre) {
       citado: false,
       estadoGestion: '#Errado',
       fuenteReclutamiento: 'Computrabajo',
-      experienciaLaboral: '1 a 2 años',
+      experienciaLaboral: 'Call center',
     });
   expect(creado.status).toBe(201);
   const id = creado.body.datos.id;
@@ -234,7 +234,7 @@ describe('Exportación a Excel', () => {
     expect(fila.getCell(13).value).toBe('COMERCIAL CON EXPERIENCIA');
     // EXPERIENCIA (migración 023), justo después de PERFIL.
     expect(hoja.getRow(1).getCell(14).value).toBe('EXPERIENCIA');
-    expect(fila.getCell(14).value).toBe('1 A 2 AÑOS');
+    expect(fila.getCell(14).value).toBe('CALL CENTER');
     // CITADO: se registró con Citado = No, pero tiene una citación real.
     expect(fila.getCell(15).value).toBe('SÍ');
     // ESTADO GESTIÓN: solo lo que coloca el reclutador. Con citación sale

@@ -1478,3 +1478,12 @@ queda guardada. Una vez guardada, se puede cambiar de opción, pero no volver a 
 **Para desplegar**: aplicar la 023 en la base de Hydra (`SELECT DATABASE()` antes si es a mano, y
 registrarla en `migraciones_aplicadas`), subir backend y frontend juntos, y pasarle a Reclutamiento
 la plantilla nueva del cargue.
+
+**Ajuste el mismo día, migración `024_experiencia_por_tipo.sql`** (aplicada solo en local): el
+campo no es el tiempo de experiencia sino el **tipo**. Opciones vigentes: *Primer empleo*, *Call
+center* y *Venta presencial*. Las cuatro de tiempo de la 023 se **desactivan** (mismo criterio que
+la 008): salen del desplegable y el backend las rechaza, pero quien ya tenga una la conserva. Se
+hizo en una migración nueva y no editando la 023 por si esa ya estaba aplicada en algún ambiente;
+en producción van **las dos, en orden** (023 y después 024). `EditarCandidato.jsx` no precarga una
+opción retirada (la reenviaría y el backend la rechazaría): el desplegable queda en
+"Selecciona…".
