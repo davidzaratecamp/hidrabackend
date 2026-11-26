@@ -184,7 +184,7 @@ Otros archivos notables: `NuevoCandidato_clean.jsx` en `components/reclutador/` 
 - **Excel "ESTADO GESTIÓN RECLUTAMIENTO" y CITADO (2026-10-20):** ESTADO GESTIÓN solo muestra lo que coloca el reclutador:
   motivo de no-citado, o el estado salvo los de Selección (No asistió…Rechazado final → CITADO). CITADO sale Sí
   si tiene citación. `restructuracion.md` §11.16 a §11.18.
-- **EXPERIENCIA en el registro (2026-11-26, migración 023, solo en local):** catálogo
-  `experiencias_laborales`, obligatorio en "Nuevo Candidato" y en el cargue por Excel (columna
+- **EXPERIENCIA en el registro (2026-11-26, migraciones 023 y 024, solo en local):** tipo de
+  experiencia (Primer empleo, Call center, Venta presencial), catálogo `experiencias_laborales`, obligatorio en "Nuevo Candidato" y en el cargue por Excel (columna
   EXPERIENCIA; la plantilla vieja se rechaza), y en el Excel de descarga después de PERFIL.
   `restructuracion.md` §11.20.
