@@ -52,9 +52,13 @@ function filaHistorico(c) {
     c.numero_documento || '',
     c.edad ?? '',
     c.email_personal || '',
+    // TELÉFONO: faltaba, y corría todas las columnas siguientes una posición
+    // a la izquierda de su encabezado (corregido 2026-11-26).
+    c.numero_celular || '',
     llamada,
     whatsapp,
     '', // PERFIL: el esquema viejo no tiene esta columna.
+    '', // EXPERIENCIA: tampoco (se captura desde la migración 023).
     'Sí', // CITADO: ver nota arriba.
     textoEstadoGestion(c),
     llamada,

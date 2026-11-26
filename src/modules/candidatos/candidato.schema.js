@@ -25,6 +25,9 @@ const base = {
   ciudad: codigo.optional(),
   // Obligatorio en el registro, igual que el resto — ver nota de arriba.
   fuenteReclutamiento: codigo,
+  // Columna EXPERIENCIA (migración 023). Obligatoria en el registro, igual que
+  // el resto; opcional en `actualizar`.
+  experienciaLaboral: codigo,
   tipificacionLlamada: codigo.optional(),
   // Solo aplica cuando Citado = No (ver el `superRefine` de `crear`, abajo):
   // con Citado = Sí el propio formulario lo vacía, no tiene sentido pedirlo.
@@ -68,6 +71,7 @@ const actualizar = z
     cargo: base.cargo.optional(),
     ciudad: base.ciudad,
     fuenteReclutamiento: base.fuenteReclutamiento.optional(),
+    experienciaLaboral: base.experienciaLaboral.optional(),
     tipificacionLlamada: base.tipificacionLlamada,
     estadoGestion: base.estadoGestion,
     observacionesGenerales: base.observacionesGenerales,

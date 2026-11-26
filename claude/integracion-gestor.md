@@ -118,6 +118,13 @@ reintenta.
   `/examenes` de Gestor fallan y hay que reintentarlos), y la 089 de Gestor antes de que alguien de
   selección decida (si no, el envío `continuidad` queda fallido). En la práctica: aplicar 089 en
   Gestor y 022 en Hydra, después subir los dos códigos. Se aplicó a mano en local, como la 021.
+- **Producción (2026-10-30)**: la 022 se corrió primero, por error, en Workbench contra la base de
+  Gestor (`call_center_support`) y falló en su primer `INSERT` sin aplicar nada. Va en la base de
+  Hydra: `npm run migrate:estado` y `npm run migrate`, o a mano verificando antes `SELECT DATABASE()`
+  y que exista `estados_candidato`; si es a mano, registrarla en `migraciones_aplicadas`. La 021 y la
+  022 no tienen `UPDATE`, así que no les afecta el modo de actualización segura de Workbench
+  (error 1175, que sí frenó a la 089 de Gestor). El permiso `decidir_continuidad_examenes` quedó para
+  Administrador, Selección y Contratación; falta decidir si se le quita a Contratación.
 - **El estado `contratado` solo lo pone el aviso de Gestor.**
 - **Un 409 de Gestor no es éxito** (a diferencia de la dirección inversa): `LOTE_CERRADO` deja el
   envío `fallido` y visible.

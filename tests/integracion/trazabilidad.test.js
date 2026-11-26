@@ -59,6 +59,7 @@ async function crearCandidato(datos) {
       citado: false,
       estadoGestion: '#Errado',
       fuenteReclutamiento: 'Computrabajo',
+      experienciaLaboral: '1 a 2 años',
       ...datos,
     });
   candidatosCreados.push(res.body.datos.id);
